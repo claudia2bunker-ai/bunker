@@ -56,8 +56,12 @@ def lobbies_keyboard(lobbies):
     rows.append([InlineKeyboardButton(text="🔙 Orqaga", callback_data="back_main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-def lobby_action_keyboard(lobby_id, is_creator=False):
-    rows = [[InlineKeyboardButton(text="✅ Qo'shilish", callback_data=f"join_lobby_{lobby_id}")]]
+def lobby_action_keyboard(lobby_id, is_creator=False, joined=False):
+    rows = []
+    if not joined:
+        rows.append([InlineKeyboardButton(text="✅ Qo'shilish", callback_data=f"join_lobby_{lobby_id}")])
+    else:
+        rows.append([InlineKeyboardButton(text="🚪 Lobbydan chiqish", callback_data=f"leave_lobby_{lobby_id}")])
     if is_creator:
         rows.append([InlineKeyboardButton(text="▶️ O'yinni boshlash", callback_data=f"start_game_{lobby_id}")])
     rows.append([InlineKeyboardButton(text="🔙 Orqaga", callback_data="view_lobbies")])
