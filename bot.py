@@ -161,7 +161,19 @@ async def callback_handler(call: CallbackQuery):
             cards = get_all_market_cards()
             await edit("🛒 <b>MARKET</b>", market_keyboard(cards))
         else:
-            await call.answer("❌ BC yetarli emas!", show_alert=True)
+            u = get_user(uid)
+            needed = card['price'] - u['bc_balance']
+            await edit(
+                f"{card['emoji']} <b>{card['name']}</b>\n\n"
+                f"❌ BC yetarli emas!\n\n"
+                f"💰 Narx: {card['price']} BC\n"
+                f"💳 Sizda: {u['bc_balance']} BC\n"
+                f"📉 Yetishmaydi: {needed} BC\n\n"
+                f"O'yin o'ynab BC to'plang:\n"
+                f"• O'yindan chiqsangiz: +10 BC\n"
+                f"• G'olib bo'lsangiz: +50-100 BC",
+                confirm_buy_keyboard(card_id)
+            )
 
     # CREATE LOBBY
     elif data == "create_lobby":
@@ -182,7 +194,7 @@ async def callback_handler(call: CallbackQuery):
             f"👥 O'yinchilar: 1/7\n"
             f"⏳ Minimum: 4 kishi\n\n"
             f"Boshqalar qo'shilishini kuting, keyin o'yinni boshlang!",
-            lobby_action_keyboard(lobby_id, is_creator=True)
+            lobby_action_keyboard(lobby_id, is_creator=True, joined=True)
         )
 
     # VIEW LOBBIES
@@ -205,22 +217,46 @@ async def callback_handler(call: CallbackQuery):
         if get_lobby_player_count(lobby_id) >= 7:
             await call.answer("❌ Lobby to'ldi!", show_alert=True)
             return
-        cards = get_recent_cards(50)
-        if not cards:
-            await call.answer("❌ Kartalar yo'q!", show_alert=True)
-            return
-        rc = random.choice(cards)
-        if not join_lobby(lobby_id, uid, rc["id"]):
-            await call.answer("❌ Siz allaqachon bu lobbydasiz!", show_alert=True)
-            return
+        already_in = is_in_lobby(lobby_id, uid)
+        if not already_in:
+            cards = get_recent_cards(50)
+            if not cards:
+                await call.answer("❌ Kartalar yo'q!", show_alert=True)
+                return
+            rc = random.choice(cards)
+            join_lobby(lobby_id, uid, rc["id"])
         new_count = get_lobby_player_count(lobby_id)
         is_creator = lobby["creator_id"] == uid
         await edit(
-            f"✅ Lobby #{lobby_id} ga qo'shildingiz!\n\n"
+            f"🏠 <b>Lobby #{lobby_id}</b>\n\n"
             f"👥 O'yinchilar: {new_count}/7\n"
+            f"✅ Siz lobbydasiz!\n"
             f"⏳ Yaratuvchi o'yinni boshlashini kuting...",
-            lobby_action_keyboard(lobby_id, is_creator=is_creator)
+            lobby_action_keyboard(lobby_id, is_creator=is_creator, joined=True)
         )
+
+    # LEAVE LOBBY
+    elif data.startswith("leave_lobby_"):
+        lobby_id = int(data.split("_")[-1])
+        lobby = get_lobby(lobby_id)
+        if not lobby or lobby["status"] != "waiting":
+            await call.answer("❌ O'yin allaqachon boshlangan, chiqib bo'lmaydi!", show_alert=True)
+            return
+        if lobby["creator_id"] == uid:
+            await call.answer("❌ Yaratuvchi lobbyni tark eta olmaydi! /stop bilan bekor qiling.", show_alert=True)
+            return
+        left = leave_lobby(lobby_id, uid)
+        if left:
+            new_count = get_lobby_player_count(lobby_id)
+            await call.answer("✅ Lobbydan chiqdingiz!")
+            await edit(
+                f"🏠 <b>Lobby #{lobby_id}</b>\n\n"
+                f"👥 O'yinchilar: {new_count}/7\n\n"
+                f"Qaytib qo'shilish uchun tugmani bosing:",
+                lobby_action_keyboard(lobby_id, joined=False)
+            )
+        else:
+            await call.answer("❌ Siz bu lobbyda emassiz!", show_alert=True)
 
     # START GAME
     elif data.startswith("start_game_"):
@@ -510,7 +546,7 @@ async def main():
     init_market_cards()
 
     # Buyruqlar menyusini o'rnatish
-    from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
+    from aiogram.types import BotCommand, BotCommandScopeDefault, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
     private_commands = [
         BotCommand(command="start", description="🏠 Botni boshlash"),
         BotCommand(command="admin", description="🔧 Admin paneli"),
@@ -524,6 +560,7 @@ async def main():
         BotCommand(command="stop", description="🛑 O'yinni bekor qilish"),
         BotCommand(command="help", description="❓ Yordam"),
     ]
+    await bot.set_my_commands(private_commands, scope=BotCommandScopeDefault())
     await bot.set_my_commands(private_commands, scope=BotCommandScopeAllPrivateChats())
     await bot.set_my_commands(group_commands, scope=BotCommandScopeAllGroupChats())
     print("✅ Buyruqlar menyusi o'rnatildi!")
