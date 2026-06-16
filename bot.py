@@ -13,8 +13,8 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+BOT_TOKEN = os.getenv("8964759983:AAFqwMDuUYQW5dQGBfx_LNeKslGorJ3dSZU")
+ADMIN_ID = int(os.getenv("6060306988"))
 MAIN_CHANNEL = "@bunker_official"
 
 bot = Bot(token=BOT_TOKEN)
