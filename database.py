@@ -396,6 +396,23 @@ def count_alive_players(lobby_id):
     conn.close()
     return count
 
+def leave_lobby(lobby_id, user_id):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("DELETE FROM lobby_players WHERE lobby_id=? AND user_id=?", (lobby_id, user_id))
+    affected = c.rowcount
+    conn.commit()
+    conn.close()
+    return affected > 0
+
+def is_in_lobby(lobby_id, user_id):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT id FROM lobby_players WHERE lobby_id=? AND user_id=?", (lobby_id, user_id))
+    row = c.fetchone()
+    conn.close()
+    return row is not None
+
 def get_lobby_player_count(lobby_id):
     conn = get_conn()
     c = conn.cursor()
