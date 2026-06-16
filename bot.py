@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
-MAIN_CHANNEL = "@bunker_official"
+MAIN_CHANNEL = "https://t.me/+Ypej9hA5AC8wNTQy"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -126,7 +126,12 @@ async def callback_handler(call: CallbackQuery):
 
     # JOIN MAIN CHANNEL
     elif data == "join_main_channel":
-        await edit(f"📢 Asosiy kanalga qo'shiling:\n{MAIN_CHANNEL}", back_keyboard("back_main"))
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📢 Kanalga qo'shilish", url=MAIN_CHANNEL)],
+            [InlineKeyboardButton(text="🔙 Orqaga", callback_data="back_main")],
+        ])
+        await edit("📢 Asosiy Bunker kanaliga qo'shiling:", kb)
 
     # MARKET
     elif data == "market" or data.startswith("market_page_"):
@@ -503,6 +508,25 @@ async def text_handler(msg: Message):
 async def main():
     init_db()
     init_market_cards()
+
+    # Buyruqlar menyusini o'rnatish
+    from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
+    private_commands = [
+        BotCommand(command="start", description="🏠 Botni boshlash"),
+        BotCommand(command="admin", description="🔧 Admin paneli"),
+        BotCommand(command="help", description="❓ Yordam"),
+    ]
+    group_commands = [
+        BotCommand(command="newgame", description="🎮 Yangi o'yin boshlash"),
+        BotCommand(command="join", description="✅ O'yinga qo'shilish"),
+        BotCommand(command="players", description="👥 O'yinchilar ro'yxati"),
+        BotCommand(command="start_game", description="▶️ O'yinni boshlash"),
+        BotCommand(command="stop", description="🛑 O'yinni bekor qilish"),
+        BotCommand(command="help", description="❓ Yordam"),
+    ]
+    await bot.set_my_commands(private_commands, scope=BotCommandScopeAllPrivateChats())
+    await bot.set_my_commands(group_commands, scope=BotCommandScopeAllGroupChats())
+    print("✅ Buyruqlar menyusi o'rnatildi!")
     print("🚀 Bunker Bot ishga tushdi!")
     await dp.start_polling(bot)
 
