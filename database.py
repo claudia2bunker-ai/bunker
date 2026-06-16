@@ -324,10 +324,13 @@ def get_lobby(lobby_id):
     conn.close()
     return dict(row) if row else None
 
-def get_active_lobbies():
+def get_active_lobbies(chat_id=None):
     conn = get_conn()
     c = conn.cursor()
-    c.execute("SELECT * FROM lobbies WHERE status='waiting' ORDER BY created_at DESC")
+    if chat_id:
+        c.execute("SELECT * FROM lobbies WHERE status='waiting' AND chat_id=? ORDER BY created_at DESC", (chat_id,))
+    else:
+        c.execute("SELECT * FROM lobbies WHERE status='waiting' ORDER BY created_at DESC")
     rows = c.fetchall()
     conn.close()
     return [dict(r) for r in rows]
