@@ -13,8 +13,8 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 
-BOT_TOKEN = os.getenv("8964759983:AAFqwMDuUYQW5dQGBfx_LNeKslGorJ3dSZU")
-ADMIN_ID = int(os.getenv("6060306988"))
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
 MAIN_CHANNEL = "@bunker_official"
 
 bot = Bot(token=BOT_TOKEN)
@@ -508,3 +508,182 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+# ─── GURUH/KANAL COMMANDALARI ────────────────────────────
+
+@dp.message(Command("newgame"))
+async def cmd_newgame(msg: Message):
+    if msg.chat.type == "private":
+        await msg.answer("❌ Bu buyruq faqat guruh yoki kanalda ishlaydi!")
+        return
+    cards = get_recent_cards(50)
+    if not cards:
+        await msg.answer("❌ Hali kartalar yo'q! Admin avval karta yaratsin.")
+        return
+    existing = [l for l in get_active_lobbies() if l["chat_id"] == msg.chat.id]
+    if existing:
+        await msg.answer(f"❌ Bu guruhda allaqachon ochiq lobby bor! #{existing[0]['id']}\nQo'shilish: /join")
+        return
+    lobby_id = create_lobby(msg.from_user.id, msg.chat.id)
+    get_or_create_user(msg.from_user.id, msg.from_user.username or "", msg.from_user.full_name)
+    rc = random.choice(cards)
+    join_lobby(lobby_id, msg.from_user.id, rc["id"])
+    await msg.answer(
+        f"🏠 <b>Yangi Bunker o'yini boshlandi!</b>\n\n"
+        f"👤 Yaratuvchi: {msg.from_user.full_name}\n"
+        f"👥 O'yinchilar: 1/7 (minimum 4)\n\n"
+        f"Qo'shilish uchun: /join\n"
+        f"O'yinchilarni ko'rish: /players\n"
+        f"O'yinni boshlash: /start_game (faqat yaratuvchi)\n"
+        f"Bekor qilish: /stop",
+        parse_mode="HTML"
+    )
+
+@dp.message(Command("join"))
+async def cmd_join(msg: Message):
+    if msg.chat.type == "private":
+        await msg.answer("❌ Bu buyruq faqat guruh yoki kanalda ishlaydi!")
+        return
+    lobbies = [l for l in get_active_lobbies() if l["chat_id"] == msg.chat.id]
+    if not lobbies:
+        await msg.answer("❌ Bu guruhda ochiq lobby yo'q!\nYangi o'yin: /newgame")
+        return
+    lobby = lobbies[0]
+    lobby_id = lobby["id"]
+    if get_lobby_player_count(lobby_id) >= 7:
+        await msg.answer("❌ Lobby to'ldi! (max 7 kishi)")
+        return
+    cards = get_recent_cards(50)
+    if not cards:
+        await msg.answer("❌ Kartalar yo'q!")
+        return
+    get_or_create_user(msg.from_user.id, msg.from_user.username or "", msg.from_user.full_name)
+    rc = random.choice(cards)
+    if not join_lobby(lobby_id, msg.from_user.id, rc["id"]):
+        await msg.answer(f"❌ {msg.from_user.first_name}, siz allaqachon lobbydasiz!")
+        return
+    count = get_lobby_player_count(lobby_id)
+    await msg.answer(
+        f"✅ <b>{msg.from_user.full_name}</b> lobbyga qo'shildi!\n"
+        f"👥 O'yinchilar: {count}/7",
+        parse_mode="HTML"
+    )
+
+@dp.message(Command("players"))
+async def cmd_players(msg: Message):
+    if msg.chat.type == "private":
+        await msg.answer("❌ Bu buyruq faqat guruh yoki kanalda ishlaydi!")
+        return
+    lobbies = [l for l in get_active_lobbies() if l["chat_id"] == msg.chat.id]
+    if not lobbies:
+        await msg.answer("❌ Ochiq lobby yo'q!")
+        return
+    lobby_id = lobbies[0]["id"]
+    players = get_lobby_players(lobby_id)
+    if not players:
+        await msg.answer("👥 Hali hech kim qo'shilmagan!")
+        return
+    text = f"👥 <b>Lobby #{lobby_id} o'yinchilari ({len(players)}/7):</b>\n\n"
+    for i, p in enumerate(players, 1):
+        text += f"{i}. {p['full_name']}\n"
+    text += f"\n⏳ Minimum 4 kishi kerak. Hozir: {len(players)}"
+    await msg.answer(text, parse_mode="HTML")
+
+@dp.message(Command("start_game"))
+async def cmd_start_game(msg: Message):
+    if msg.chat.type == "private":
+        await msg.answer("❌ Bu buyruq faqat guruh yoki kanalda ishlaydi!")
+        return
+    lobbies = [l for l in get_active_lobbies() if l["chat_id"] == msg.chat.id]
+    if not lobbies:
+        await msg.answer("❌ Ochiq lobby yo'q! /newgame bilan yangi o'yin oching.")
+        return
+    lobby = lobbies[0]
+    lobby_id = lobby["id"]
+    if lobby["creator_id"] != msg.from_user.id:
+        await msg.answer("❌ Faqat yaratuvchi o'yinni boshlaydi!")
+        return
+    count = get_lobby_player_count(lobby_id)
+    if count < 4:
+        await msg.answer(f"❌ Kamida 4 kishi kerak! Hozir: {count}\nQo'shilish: /join")
+        return
+    players = get_lobby_players(lobby_id)
+    scenario, year = get_random_scenario()
+    update_lobby_status(lobby_id, "active", scenario, year)
+    init_game_state(lobby_id, players, scenario, year)
+    scenario_desc = await get_scenario_description(scenario, year)
+    player_list = "\n".join([f"• {p['full_name']}" for p in players])
+    await msg.answer(
+        f"🚨 <b>O'YIN BOSHLANDI!</b>\n\n"
+        f"📅 Yil: <b>{year}</b>\n"
+        f"⚡ Voqea: <b>{scenario}</b>\n\n"
+        f"<i>{scenario_desc}</i>\n\n"
+        f"👥 Ishtirokchilar:\n{player_list}\n\n"
+        f"⏳ Har bir o'yinchi botga o'tib kartasini ochsin!\n"
+        f"👉 @{(await bot.get_me()).username}",
+        parse_mode="HTML"
+    )
+    for player in players:
+        try:
+            await bot.send_message(
+                player["user_id"],
+                f"🃏 <b>Sizning kartangiz:</b>\n\n"
+                f"🏷️ Tur: {player['card_type']}\n"
+                f"👤 Nom: <b>{player['card_name']}</b>\n"
+                f"📝 Tavsif: {player['card_desc']}\n\n"
+                f"Kartangizni guruhda ochish uchun quyidagi tugmani bosing:",
+                parse_mode="HTML",
+                reply_markup=reveal_card_keyboard(lobby_id)
+            )
+        except Exception as e:
+            logging.error(f"Xabar yuborilmadi {player['user_id']}: {e}")
+            await msg.answer(
+                f"⚠️ <b>{player['full_name']}</b> ga xabar yuborilmadi!\n"
+                f"Iltimos botga /start yuboring: @{(await bot.get_me()).username}",
+                parse_mode="HTML"
+            )
+
+@dp.message(Command("stop"))
+async def cmd_stop(msg: Message):
+    if msg.chat.type == "private":
+        await msg.answer("❌ Bu buyruq faqat guruh yoki kanalda ishlaydi!")
+        return
+    lobbies = [l for l in get_active_lobbies() if l["chat_id"] == msg.chat.id]
+    if not lobbies:
+        await msg.answer("❌ Ochiq lobby yo'q!")
+        return
+    lobby = lobbies[0]
+    if lobby["creator_id"] != msg.from_user.id and msg.from_user.id != ADMIN_ID:
+        await msg.answer("❌ Faqat yaratuvchi yoki admin bekor qila oladi!")
+        return
+    update_lobby_status(lobby["id"], "finished")
+    end_game(lobby["id"])
+    await msg.answer("🛑 O'yin bekor qilindi!")
+
+@dp.message(Command("help"))
+async def cmd_help(msg: Message):
+    if msg.chat.type == "private":
+        await msg.answer(
+            "🤖 <b>Bunker Bot yordam</b>\n\n"
+            "Guruh/kanalda o'yin o'ynash uchun botni guruhga qo'shing va:\n\n"
+            "/newgame — yangi o'yin boshlash\n"
+            "/join — o'yinga qo'shilish\n"
+            "/players — o'yinchilar ro'yxati\n"
+            "/start_game — o'yinni boshlash\n"
+            "/stop — o'yinni bekor qilish\n\n"
+            "Private botda:\n"
+            "🛒 Market, 🏆 Reyting, 👤 Profil va boshqalar",
+            parse_mode="HTML",
+            reply_markup=main_menu()
+        )
+    else:
+        await msg.answer(
+            "🤖 <b>Bunker Bot buyruqlari:</b>\n\n"
+            "/newgame — yangi o'yin boshlash\n"
+            "/join — o'yinga qo'shilish\n"
+            "/players — o'yinchilar ro'yxati\n"
+            "/start_game — o'yinni boshlash (yaratuvchi)\n"
+            "/stop — o'yinni bekor qilish\n"
+            "/help — yordam",
+            parse_mode="HTML"
+        )
