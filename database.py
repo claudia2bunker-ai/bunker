@@ -437,3 +437,174 @@ def get_user_channels(user_id):
     rows = c.fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+# ─── UNVONLAR ────────────────────────────────────────────
+RANKS = [
+    {"name": "🪨 Yangi keldi",      "min_wins": 0,   "bonus_bc": 0,  "perk": None},
+    {"name": "🛡️ Omon qoluvchi",   "min_wins": 5,   "bonus_bc": 5,  "perk": None},
+    {"name": "⚔️ Bunker Jangchisi", "min_wins": 10,  "bonus_bc": 0,  "perk": "discount"},
+    {"name": "🧠 Strateg",          "min_wins": 20,  "bonus_bc": 0,  "perk": "see_votes"},
+    {"name": "👑 Bunker Ustasi",    "min_wins": 50,  "bonus_bc": 0,  "perk": "special_card"},
+    {"name": "🌟 Legend",           "min_wins": 100, "bonus_bc": 0,  "perk": "legend_card"},
+]
+
+def get_rank(wins: int) -> dict:
+    rank = RANKS[0]
+    for r in RANKS:
+        if wins >= r["min_wins"]:
+            rank = r
+    return rank
+
+def get_next_rank(wins: int) -> dict | None:
+    for r in RANKS:
+        if wins < r["min_wins"]:
+            return r
+    return None
+
+# ─── KUNLIK BONUS ─────────────────────────────────────────
+def init_bonus_tables():
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS daily_bonus (
+        user_id INTEGER PRIMARY KEY,
+        last_claimed TEXT,
+        streak INTEGER DEFAULT 0
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS referrals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        referrer_id INTEGER,
+        referred_id INTEGER,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS user_perks (
+        user_id INTEGER PRIMARY KEY,
+        discount_used INTEGER DEFAULT 0
+    )''')
+    conn.commit()
+    conn.close()
+
+def get_bonus_info(user_id):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT * FROM daily_bonus WHERE user_id=?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def claim_daily_bonus(user_id):
+    from datetime import datetime, timedelta
+    conn = get_conn()
+    c = conn.cursor()
+    today = datetime.now().date().isoformat()
+    c.execute("SELECT * FROM daily_bonus WHERE user_id=?", (user_id,))
+    row = c.fetchone()
+
+    if row:
+        last = row["last_claimed"]
+        streak = row["streak"]
+        yesterday = (datetime.now().date() - timedelta(days=1)).isoformat()
+        if last == today:
+            conn.close()
+            return None, streak  # allaqachon olgan
+        if last == yesterday:
+            streak += 1  # streak davom etmoqda
+        else:
+            streak = 1  # streak uzildi
+        c.execute("UPDATE daily_bonus SET last_claimed=?, streak=? WHERE user_id=?",
+                  (today, streak, user_id))
+    else:
+        streak = 1
+        c.execute("INSERT INTO daily_bonus (user_id, last_claimed, streak) VALUES (?,?,?)",
+                  (user_id, today, streak))
+
+    # Bonus miqdori
+    bonus_map = {1:15, 2:20, 3:30, 4:40, 5:50, 6:75, 7:100}
+    bonus = bonus_map.get(min(streak, 7), 100)
+    if streak >= 30:
+        bonus = 500
+
+    c.execute("UPDATE users SET bc_balance=bc_balance+? WHERE user_id=?", (bonus, user_id))
+    conn.commit()
+    conn.close()
+    return bonus, streak
+
+# ─── REFERAL ─────────────────────────────────────────────
+REFERRAL_RANK_THRESHOLDS = [3, 6, 10, 15, 21, 28]  # har threshold da unvon bonusi
+
+def register_referral(referrer_id, referred_id):
+    conn = get_conn()
+    c = conn.cursor()
+    # Avval tekshir — referred allaqachon ro'yxatdanmi
+    c.execute("SELECT id FROM referrals WHERE referred_id=?", (referred_id,))
+    if c.fetchone():
+        conn.close()
+        return False
+    c.execute("INSERT INTO referrals (referrer_id, referred_id) VALUES (?,?)",
+              (referrer_id, referred_id))
+    # Referrer ga BC
+    c.execute("UPDATE users SET bc_balance=bc_balance+50 WHERE user_id=?", (referrer_id,))
+    # Yangi kelganga BC
+    c.execute("UPDATE users SET bc_balance=bc_balance+30 WHERE user_id=?", (referred_id,))
+    conn.commit()
+    conn.close()
+    return True
+
+def get_referral_count(user_id):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id=?", (user_id,))
+    count = c.fetchone()[0]
+    conn.close()
+    return count
+
+def check_referral_rank_up(user_id):
+    """Har 3 referal da unvon bonusi — alohida progress"""
+    count = get_referral_count(user_id)
+    if count in REFERRAL_RANK_THRESHOLDS:
+        bonus = count * 20  # 3→60, 6→120, 10→200...
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute("UPDATE users SET bc_balance=bc_balance+? WHERE user_id=?", (bonus, user_id))
+        conn.commit()
+        conn.close()
+        return True, bonus, count
+    return False, 0, count
+
+# ─── PERK: CHEGIRMA ───────────────────────────────────────
+def use_discount(user_id) -> bool:
+    """Bunker Jangchisi uchun bir martalik -10% chegirma"""
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("INSERT OR IGNORE INTO user_perks (user_id) VALUES (?)", (user_id,))
+    c.execute("SELECT discount_used FROM user_perks WHERE user_id=?", (user_id,))
+    row = c.fetchone()
+    if row and row[0] == 0:
+        c.execute("UPDATE user_perks SET discount_used=1 WHERE user_id=?", (user_id,))
+        conn.commit()
+        conn.close()
+        return True
+    conn.close()
+    return False
+
+def discount_available(user_id) -> bool:
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT discount_used FROM user_perks WHERE user_id=?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    if row is None:
+        return True
+    return row[0] == 0
+
+# ─── TEZLIK BONUSI ────────────────────────────────────────
+def give_first_reveal_bonus(lobby_id, user_id):
+    """Lobbydagi birinchi karta ochuvchiga +3 BC"""
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM lobby_players WHERE lobby_id=? AND card_revealed=1", (lobby_id,))
+    revealed_count = c.fetchone()[0]
+    conn.close()
+    if revealed_count == 1:  # birinchi ochar
+        add_bc(user_id, 3)
+        return True
+    return False
