@@ -1,7 +1,7 @@
 import aiohttp
 import os
 
-GROK_API_KEY = os.getenv("GROK_API_KEY")
+GROK_API_KEY = os.getenv("xai-PSGollLh40I9cSEZcQeCdniWYH99eGTVyetZmWlLYUOGwZyj9sdfVYbSqjiFFsQSPfFdxGlJMUaL0NcP")
 GROK_API_URL = "https://api.x.ai/v1/chat/completions"
 
 async def _ask_grok(prompt, max_tokens=800, temperature=0.9):
