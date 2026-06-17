@@ -10,6 +10,9 @@ def main_menu():
          InlineKeyboardButton(text="🏆 Reyting", callback_data="rating")],
         [InlineKeyboardButton(text="🛒 Market", callback_data="market"),
          InlineKeyboardButton(text="👤 Profilim", callback_data="profile")],
+        [InlineKeyboardButton(text="☀️ Kunlik bonus", callback_data="daily_bonus"),
+         InlineKeyboardButton(text="📊 Statistika", callback_data="stats")],
+        [InlineKeyboardButton(text="🎁 Referal", callback_data="referral")],
     ])
 
 def admin_menu():
