@@ -2,7 +2,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔗 Kanalga ulash", callback_data="connect_channel"),
+        [InlineKeyboardButton(text="➕ Botni guruhga qo'shish", callback_data="add_to_group"),
          InlineKeyboardButton(text="📢 Kanalga qo'shilish", callback_data="join_main_channel")],
         [InlineKeyboardButton(text="🎮 Lobby ochish", callback_data="create_lobby"),
          InlineKeyboardButton(text="👥 Lobbylarni ko'rish", callback_data="view_lobbies")],
