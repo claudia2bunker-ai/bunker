@@ -525,7 +525,23 @@ async def callback_handler(call: CallbackQuery):
             "⚠️ Bot kanalga admin bo'lishi kerak!",
             back_keyboard("back_main"))
 
-    elif data == "join_main_channel":
+    elif data == "add_to_group":
+        me = await bot.get_me()
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text="➕ Guruhni tanlang",
+                url=f"https://t.me/{me.username}?startgroup=true"
+            )
+        ],[
+            InlineKeyboardButton(text="🔙 Orqaga", callback_data="back_main")
+        ]])
+        await edit(
+            "➕ <b>Botni guruhga qo'shish</b>\n\n"
+            "Quyidagi tugmani bosing — guruhlaringiz ro'yxati chiqadi.\n"
+            "Kerakli guruhni tanlang, bot qo'shiladi!",
+            kb
+        )
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📢 Kanalga qo'shilish", url=MAIN_CHANNEL)],
