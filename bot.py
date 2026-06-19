@@ -16,6 +16,9 @@ logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 MAIN_CHANNEL = "https://t.me/+Ypej9hA5AC8wNTQy"
+# Kanal ID olish: kanalga @userinfobot qo'shing va /start yozing
+# Yoki kanal ga bot admin qilib, biror xabar forward qilib @RawDataBot ga yuboring
+MAIN_CHANNEL_ID = None  # Masalan: -1001234567890
 
 # ── Global bot va dp ───────────────────────────────────────
 bot = Bot(token=BOT_TOKEN)
@@ -26,6 +29,43 @@ group_router = Router()
 
 private_router.message.filter(F.chat.type == "private")
 group_router.message.filter(F.chat.type.in_({"group", "supergroup"}))
+
+# ── Guruhda o'yin bo'lsa lobbyga qo'shilmaganlar yoza olmasin ──
+@group_router.message(F.text & ~F.text.startswith("/"))
+async def block_non_players(msg: Message):
+    chat_id = msg.chat.id
+    uid = msg.from_user.id
+
+    # Bu guruhda faol o'yin bormi?
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT id FROM lobbies WHERE chat_id=? AND status='active'", (chat_id,))
+    active = c.fetchone()
+    conn.close()
+
+    if not active:
+        return  # O'yin yo'q — hammaga ruxsat
+
+    lobby_id = active[0]
+    game = get_game(lobby_id)
+
+    if not game:
+        return  # O'yin xotirada yo'q — ruxsat
+
+    # O'yinda qatnashuvchi yoki chiqarilganmi?
+    is_participant = (
+        uid in game["alive_players"] or
+        uid in game.get("eliminated", [])
+    )
+
+    if not is_participant:
+        # Xabarni o'chir
+        try:
+            await msg.delete()
+        except:
+            pass
+
+
 
 dp.include_router(group_router)
 dp.include_router(private_router)
@@ -47,6 +87,25 @@ async def start(msg: Message):
     args = msg.text.split()
     is_new = get_user(uid) is None
     user = get_or_create_user(uid, msg.from_user.username or "", msg.from_user.full_name)
+
+    # Kanal obunasini tekshirish
+    if MAIN_CHANNEL_ID:
+        try:
+            member = await bot.get_chat_member(MAIN_CHANNEL_ID, uid)
+            is_subscribed = member.status not in ("left", "kicked")
+        except:
+            is_subscribed = True
+        if not is_subscribed:
+            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📢 Kanalga qo'shilish", url=MAIN_CHANNEL)],
+                [InlineKeyboardButton(text="✅ Qo'shildim", callback_data="check_sub")],
+            ])
+            await msg.answer(
+                "⚠️ <b>Botdan foydalanish uchun avval kanalga qo'shiling!</b>\n\n"
+                "👇 Quyidagi tugmani bosing:",
+                parse_mode="HTML", reply_markup=kb)
+            return
 
     if is_new and len(args) > 1 and args[1].startswith("ref_"):
         try:
@@ -412,7 +471,24 @@ async def callback_handler(call: CallbackQuery):
     await call.answer()
 
     # ── DAILY BONUS ──
-    if data == "daily_bonus":
+    if data == "check_sub":
+        uid = call.from_user.id
+        try:
+            member = await bot.get_chat_member(MAIN_CHANNEL_ID, uid)
+            is_subscribed = member.status not in ("left", "kicked")
+        except:
+            is_subscribed = True
+        if is_subscribed:
+            user = get_or_create_user(uid, call.from_user.username or "", call.from_user.full_name)
+            await edit(
+                f"✅ Rahmat! Xush kelibsiz!\n\n"
+                f"☢️ <b>BUNKER</b> ga xush kelibsiz, {call.from_user.first_name}!\n"
+                f"💰 BC: {user['bc_balance']}",
+                main_menu())
+        else:
+            await call.answer("❌ Siz hali kanalga qo'shilmagansiz!", show_alert=True)
+
+    elif data == "daily_bonus":
         get_or_create_user(uid, call.from_user.username or "", call.from_user.full_name)
         bonus, streak = claim_daily_bonus(uid)
         if bonus is None:
@@ -528,20 +604,19 @@ async def callback_handler(call: CallbackQuery):
     elif data == "add_to_group":
         me = await bot.get_me()
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-        kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(
-                text="➕ Guruhni tanlang",
-                url=f"https://t.me/{me.username}?startgroup=true"
-            )
-        ],[
-            InlineKeyboardButton(text="🔙 Orqaga", callback_data="back_main")
-        ]])
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Guruhni tanlang", url=f"https://t.me/{me.username}?startgroup=true")],
+            [InlineKeyboardButton(text="🔙 Orqaga", callback_data="back_main")]
+        ])
         await edit(
             "➕ <b>Botni guruhga qo'shish</b>\n\n"
             "Quyidagi tugmani bosing — guruhlaringiz ro'yxati chiqadi.\n"
-            "Kerakli guruhni tanlang, bot qo'shiladi!",
+            "Kerakli guruhni tanlang, bot qo'shiladi!\n\n"
+            "Qo'shilgandan so'ng guruhda /newgame yozing.",
             kb
         )
+
+    elif data == "join_main_channel":
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📢 Kanalga qo'shilish", url=MAIN_CHANNEL)],
