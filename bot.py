@@ -132,12 +132,13 @@ async def start(msg: Message):
         except:
             pass
 
+    me = await bot.get_me()
     await msg.answer(
         f"☢️ <b>BUNKER</b> ga xush kelibsiz, {msg.from_user.first_name}!\n\n"
         f"Apokalipsis boshlanmoqda. Bunkerda joy cheklangan.\n"
         f"Faqat eng loyiqlari omon qoladi...\n\n"
         f"💰 BC: {user['bc_balance']}",
-        parse_mode="HTML", reply_markup=main_menu())
+        parse_mode="HTML", reply_markup=main_menu(me.username))
 
 @private_router.message(Command("admin"))
 async def admin_cmd(msg: Message):
@@ -605,7 +606,10 @@ async def callback_handler(call: CallbackQuery):
         me = await bot.get_me()
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="➕ Guruhni tanlang", url=f"https://t.me/{me.username}?startgroup=true")],
+            [InlineKeyboardButton(
+                text="➕ Guruhni tanlang",
+                url=f"https://t.me/{me.username}?startgroup=start"
+            )],
             [InlineKeyboardButton(text="🔙 Orqaga", callback_data="back_main")]
         ])
         await edit(
@@ -1021,6 +1025,59 @@ async def check_and_notify_rank(user_id, wins):
 # ═══════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════
+# BOT GURUHGA QO'SHILGANDA
+# ═══════════════════════════════════════════════════════════
+
+@dp.my_chat_member()
+async def on_bot_added(event):
+    from aiogram.types import ChatMemberUpdated
+    new_status = event.new_chat_member.status
+    chat = event.chat
+    chat_type = chat.type
+
+    if chat_type not in ("group", "supergroup"):
+        return
+
+    if new_status == "member" or new_status == "administrator":
+        # Guruh bazaga yoziladi
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS groups (
+            chat_id INTEGER PRIMARY KEY,
+            title TEXT,
+            added_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )''')
+        c.execute("INSERT OR REPLACE INTO groups (chat_id, title) VALUES (?,?)",
+                  (chat.id, chat.title or "Nomsiz guruh"))
+        conn.commit()
+        conn.close()
+
+        # Xush kelibsiz xabari
+        try:
+            await bot.send_message(
+                chat.id,
+                f"☢️ <b>BUNKER</b> boti guruhga qo'shildi!\n\n"
+                f"O'yin boshlash uchun:\n"
+                f"1️⃣ /newgame — yangi o'yin oching\n"
+                f"2️⃣ /join — qo'shiling\n"
+                f"3️⃣ /start_game — boshlang!\n\n"
+                f"Kamida 4 kishi kerak. Omad! 🏆",
+                parse_mode="HTML"
+            )
+        except:
+            pass
+
+    elif new_status in ("left", "kicked"):
+        # Guruhdan chiqarildi — lobbylarni bekor qil
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute("UPDATE lobbies SET status='finished' WHERE chat_id=? AND status='waiting'",
+                  (chat.id,))
+        conn.commit()
+        conn.close()
+        end_game(chat.id)
 
 async def main():
     init_db()
