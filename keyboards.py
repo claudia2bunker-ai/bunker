@@ -1,9 +1,9 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-def main_menu():
+def main_menu(bot_username="bunker_uzbbot"):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ Botni guruhga qo'shish", callback_data="add_to_group"),
-         InlineKeyboardButton(text="📢 Kanalga qo'shilish", callback_data="join_main_channel")],
+        [InlineKeyboardButton(text="➕ Botni guruhga qo'shish", url=f"https://t.me/{bot_username}?startgroup=start")],
+        [InlineKeyboardButton(text="📢 Kanalga qo'shilish", url="https://t.me/+Ypej9hA5AC8wNTQy")],
         [InlineKeyboardButton(text="🎮 Lobby ochish", callback_data="create_lobby"),
          InlineKeyboardButton(text="👥 Lobbylarni ko'rish", callback_data="view_lobbies")],
         [InlineKeyboardButton(text="📜 Qoidalar", callback_data="rules"),
