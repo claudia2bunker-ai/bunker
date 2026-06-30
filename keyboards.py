@@ -75,6 +75,16 @@ def reveal_card_keyboard(lobby_id):
         InlineKeyboardButton(text="🃏 Kartamni ochish", callback_data=f"reveal_card_{lobby_id}")
     ]])
 
+def card_choice_keyboard(lobby_id, unopened_cards):
+    """unopened_cards: list of (index, card_dict) — o'yinchi qaysi turdagi kartasini ochishni tanlaydi"""
+    rows = []
+    for idx, card in unopened_cards:
+        rows.append([InlineKeyboardButton(
+            text=f"{card['card_type']}",
+            callback_data=f"openidx_{lobby_id}_{idx}"
+        )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
 def vote_keyboard(lobby_id, players, voter_id):
     rows = []
     for p in players:
