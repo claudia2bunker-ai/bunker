@@ -224,6 +224,21 @@ def get_random_cards(count):
     conn.close()
     return [dict(r) for r in rows]
 
+def get_8_cards_for_player():
+    """Har turdan bitta random karta — 8 ta tur uchun"""
+    types = ["👮 Kasb","💪 Salomatlik","📖 Biografiya","🎯 Hunar",
+             "🧬 Genetika","🧠 Aql","❤️ Ijtimoiy","🎒 Bagaj"]
+    conn = get_conn()
+    c = conn.cursor()
+    result = []
+    for t in types:
+        c.execute("SELECT * FROM cards WHERE card_type=? ORDER BY RANDOM() LIMIT 1", (t,))
+        row = c.fetchone()
+        if row:
+            result.append(dict(row))
+    conn.close()
+    return result
+
 # ─── MARKET CARDS ────────────────────────────────────────
 def init_market_cards():
     conn = get_conn()
@@ -335,7 +350,7 @@ def get_active_lobbies(chat_id=None):
     conn.close()
     return [dict(r) for r in rows]
 
-def join_lobby(lobby_id, user_id, card_id):
+def join_lobby(lobby_id, user_id, card_id=None):
     conn = get_conn()
     c = conn.cursor()
     c.execute("SELECT * FROM lobby_players WHERE lobby_id=? AND user_id=?", (lobby_id, user_id))
@@ -351,11 +366,9 @@ def join_lobby(lobby_id, user_id, card_id):
 def get_lobby_players(lobby_id):
     conn = get_conn()
     c = conn.cursor()
-    c.execute("""SELECT lp.*, u.full_name, u.username,
-                        ca.name as card_name, ca.description as card_desc, ca.card_type
+    c.execute("""SELECT lp.*, u.full_name, u.username
                  FROM lobby_players lp
                  JOIN users u ON lp.user_id=u.user_id
-                 JOIN cards ca ON lp.card_id=ca.id
                  WHERE lp.lobby_id=? AND lp.is_alive=1""", (lobby_id,))
     rows = c.fetchall()
     conn.close()
@@ -597,14 +610,9 @@ def discount_available(user_id) -> bool:
     return row[0] == 0
 
 # ─── TEZLIK BONUSI ────────────────────────────────────────
-def give_first_reveal_bonus(lobby_id, user_id):
-    """Lobbydagi birinchi karta ochuvchiga +3 BC"""
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM lobby_players WHERE lobby_id=? AND card_revealed=1", (lobby_id,))
-    revealed_count = c.fetchone()[0]
-    conn.close()
-    if revealed_count == 1:  # birinchi ochar
+def give_first_reveal_bonus(lobby_id, user_id, is_first: bool):
+    """Lobbydagi 1-raundda birinchi karta ochuvchiga +3 BC (is_first chaqiruvchi tomonidan hisoblanadi)"""
+    if is_first:
         add_bc(user_id, 3)
         return True
     return False
