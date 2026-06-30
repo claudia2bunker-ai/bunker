@@ -402,20 +402,20 @@ async def cmd_start_game(msg: Message):
         f"📅 Yil: <b>{year}</b>\n⚡ Voqea: <b>{scenario}</b>\n\n"
         f"<i>{scenario_desc}</i>\n\n"
         f"👥 Ishtirokchilar:\n{player_list}\n\n"
-        f"⚠️ Har bir o'yinchi botga o'tib kartasini ochsin!\n👉 @{me.username}",
+        f"🃏 Har bir o'yinchiga 8 ta yashirin xususiyat berildi!\n"
+        f"⚠️ Botga o'tib, 1-raund uchun bitta kartangizni tanlab oching!\n👉 @{me.username}",
         parse_mode="HTML")
     failed = []
     for player in players:
         try:
+            unopened = get_unopened_cards(lobby_id, player["user_id"])
             await bot.send_message(
                 chat_id=player["user_id"],
-                text=f"🃏 <b>Sizning kartangiz:</b>\n\n"
-                     f"🏷️ Tur: {player['card_type']}\n"
-                     f"👤 Nom: <b>{player['card_name']}</b>\n"
-                     f"📝 Tavsif: {player['card_desc']}\n\n"
-                     f"Kartangizni ochish uchun quyidagi tugmani bosing:",
+                text=f"🃏 <b>Sizda 8 ta yashirin xususiyat bor!</b>\n\n"
+                     f"1-raund uchun qaysi birini ochmoqchisiz?\n"
+                     f"(Tanlangan tur ochiladi, ichidagi aniq xususiyat ko'rinadi)",
                 parse_mode="HTML",
-                reply_markup=reveal_card_keyboard(lobby_id))
+                reply_markup=card_choice_keyboard(lobby_id, unopened))
         except Exception as e:
             logging.error(f"PM yuborilmadi {player['user_id']}: {e}")
             failed.append(player['full_name'])
@@ -766,23 +766,24 @@ async def callback_handler(call: CallbackQuery):
             f"🚨 <b>O'YIN BOSHLANDI!</b>\n\n📅 Yil: <b>{year}</b>\n"
             f"⚡ Voqea: <b>{scenario}</b>\n\n<i>{scenario_desc}</i>\n\n"
             f"👥 Ishtirokchilar:\n{player_list}\n\n"
-            f"⚠️ Har bir o'yinchi botga o'tib kartasini ochsin!\n👉 @{me.username}")
+            f"🃏 Har biriga 8 ta yashirin xususiyat berildi!\n"
+            f"⚠️ Botga o'tib 1-raund kartangizni tanlab oching!\n👉 @{me.username}")
         for player in players:
             try:
+                unopened = get_unopened_cards(lobby_id, player["user_id"])
                 await bot.send_message(
                     chat_id=player["user_id"],
-                    text=f"🃏 <b>Sizning kartangiz:</b>\n\n"
-                         f"🏷️ Tur: {player['card_type']}\n"
-                         f"👤 Nom: <b>{player['card_name']}</b>\n"
-                         f"📝 Tavsif: {player['card_desc']}\n\n"
-                         f"Kartangizni ochish uchun tugmani bosing:",
+                    text=f"🃏 <b>Sizda 8 ta yashirin xususiyat bor!</b>\n\n"
+                         f"1-raund uchun qaysi birini ochmoqchisiz?",
                     parse_mode="HTML",
-                    reply_markup=reveal_card_keyboard(lobby_id))
+                    reply_markup=card_choice_keyboard(lobby_id, unopened))
             except Exception as e:
                 logging.error(f"PM yuborilmadi {player['user_id']}: {e}")
 
-    elif data.startswith("reveal_card_"):
-        lobby_id = int(data.split("_")[-1])
+    elif data.startswith("openidx_"):
+        parts = data.split("_")
+        lobby_id = int(parts[1])
+        card_index = int(parts[2])
         game = get_game(lobby_id)
         if not game:
             await call.answer("❌ O'yin topilmadi!", show_alert=True)
@@ -790,29 +791,42 @@ async def callback_handler(call: CallbackQuery):
         if uid not in game["alive_players"]:
             await call.answer("❌ Siz bu o'yinda emassiz!", show_alert=True)
             return
-        if uid in game["revealed"]:
-            await call.answer("✅ Allaqachon ochdingiz!", show_alert=True)
+        if uid in game["revealed_this_round"]:
+            await call.answer("✅ Bu raundda allaqachon ochdingiz!", show_alert=True)
             return
-        player = game["players"].get(uid)
-        all_revealed = reveal_player_card(lobby_id, uid)
-        await call.answer(f"✅ Ochildi: {player['card_name']}")
 
-        # Tezlik bonusi
-        first = give_first_reveal_bonus(lobby_id, uid)
-        if first:
-            try:
-                await bot.send_message(uid, "⚡ Birinchi karta ochdingiz! +3 BC!")
-            except:
-                pass
+        opened_card = open_card_by_index(lobby_id, uid, card_index)
+        if not opened_card:
+            await call.answer("❌ Bu kartani allaqachon ochgansiz!", show_alert=True)
+            return
+
+        player = game["players"].get(uid)
+        await edit(
+            f"✅ <b>Siz ochdingiz:</b>\n\n"
+            f"🏷️ {opened_card['card_type']}\n"
+            f"👤 <b>{opened_card['name']}</b>\n"
+            f"📝 <i>{opened_card['description']}</i>"
+        )
+
+        # Tezlik bonusi — faqat 1-raundda, birinchi ochuvchiga
+        if game["round"] == 1 and len(game["revealed_this_round"]) == 1:
+            first = give_first_reveal_bonus(lobby_id, uid, True)
+            if first:
+                try:
+                    await bot.send_message(uid, "⚡ Birinchi karta ochdingiz! +3 BC!")
+                except:
+                    pass
 
         lobby = get_lobby(lobby_id)
         group_chat_id = lobby["chat_id"] if lobby else cid
         await bot.send_message(group_chat_id,
-            f"👁️ <b>{player['full_name']}</b> kartasini ochdi:\n\n"
-            f"🏷️ {player['card_type']}\n👤 <b>{player['card_name']}</b>\n"
-            f"📝 <i>{player['card_desc']}</i>",
+            f"👁️ <b>{player['full_name']}</b> kartasini ochdi (Raund {game['round']}):\n\n"
+            f"🏷️ {opened_card['card_type']}\n"
+            f"👤 <b>{opened_card['name']}</b>\n"
+            f"📝 <i>{opened_card['description']}</i>",
             parse_mode="HTML")
-        if all_revealed:
+
+        if all_alive_revealed_this_round(lobby_id):
             await asyncio.sleep(2)
             asyncio.create_task(start_voting_phase(group_chat_id, lobby_id))
 
@@ -880,6 +894,42 @@ async def callback_handler(call: CallbackQuery):
 # O'YIN FAZALARI
 # ═══════════════════════════════════════════════════════════
 
+async def start_card_round(chat_id, lobby_id):
+    """Yangi raund uchun barcha tirik o'yinchilarga karta tanlash so'raladi"""
+    game = get_game(lobby_id)
+    if not game:
+        return
+    reset_round_reveals(lobby_id)
+    game["phase"] = "card_reveal"
+
+    await bot.send_message(chat_id,
+        f"🃏 <b>RAUND {game['round']} — KARTA OCHISH VAQTI!</b>\n\n"
+        f"Barcha tirik o'yinchilar botda yangi xususiyatini tanlab ochsin!",
+        parse_mode="HTML")
+
+    for player_uid in game["alive_players"]:
+        unopened = get_unopened_cards(lobby_id, player_uid)
+        if not unopened:
+            # Hamma kartalar tugagan — avtomatik o'tkazib yuborish
+            game["revealed_this_round"].add(player_uid)
+            continue
+        try:
+            await bot.send_message(
+                player_uid,
+                f"🃏 <b>Raund {game['round']}</b>\n\n"
+                f"Qaysi xususiyatingizni ochmoqchisiz?",
+                parse_mode="HTML",
+                reply_markup=card_choice_keyboard(lobby_id, unopened)
+            )
+        except Exception as e:
+            logging.error(f"PM yuborilmadi {player_uid}: {e}")
+            game["revealed_this_round"].add(player_uid)
+
+    # Agar hamma allaqachon avtomatik belgilangan bo'lsa (kartalar tugagan)
+    if all_alive_revealed_this_round(lobby_id):
+        await asyncio.sleep(1)
+        await start_voting_phase(chat_id, lobby_id)
+
 async def start_voting_phase(chat_id, lobby_id):
     game = get_game(lobby_id)
     if not game:
@@ -928,9 +978,14 @@ async def process_votes(chat_id, lobby_id):
 
     eliminated_player = game["players"].get(eliminated_id)
     eliminate(lobby_id, eliminated_id)
+
+    # Chiqarilgan o'yinchining barcha kartalarini ochib ko'rsatamiz
+    all_cards_text = "\n".join([
+        f"• {c['card_type']}: {c['name']}" for c in eliminated_player["cards"]
+    ])
     await bot.send_message(chat_id,
         f"❌ <b>{eliminated_player['full_name']}</b> bunkerdan chiqarildi!\n\n"
-        f"Karta: {eliminated_player['card_name']}\n<i>{eliminated_player['card_desc']}</i>",
+        f"<b>Barcha xususiyatlari fosh bo'ldi:</b>\n{all_cards_text}",
         parse_mode="HTML")
 
     update_stats(eliminated_id, won=False)
@@ -945,10 +1000,10 @@ async def process_votes(chat_id, lobby_id):
         await finish_game(chat_id, lobby_id)
     else:
         await bot.send_message(chat_id,
-            f"✅ Qolgan o'yinchilar: {alive_count}\nKeyingi raund boshlanmoqda...",
+            f"✅ Qolgan o'yinchilar: {alive_count}\n\nKeyingi raund uchun yangi karta tanlanadi...",
             parse_mode="HTML")
         await asyncio.sleep(3)
-        asyncio.create_task(start_voting_phase(chat_id, lobby_id))
+        await start_card_round(chat_id, lobby_id)
 
 async def finish_game(chat_id, lobby_id):
     game = get_game(lobby_id)
@@ -963,15 +1018,35 @@ async def finish_game(chat_id, lobby_id):
         f"🎉 <b>O'YIN TUGADI!</b>\n\n🏆 G'oliblar: <b>{winner_names}</b>\n\n⏳ Grok tahlili...",
         parse_mode="HTML")
 
+    # Grok uchun "card_name"/"card_desc"/"card_type" formatiga moslashtirish
+    # (barcha 8 ta xususiyatni birlashtirib beramiz)
+    def summarize_player(p):
+        cards_summary = "; ".join([f"{c['card_type']}: {c['name']} ({c['description']})" for c in p["cards"]])
+        return {
+            "full_name": p["full_name"],
+            "card_type": "Xususiyatlar",
+            "card_name": cards_summary,
+            "card_desc": ""
+        }
+
+    winners_summary = [summarize_player(p) for p in winners_data]
+    eliminated_summary = [summarize_player(p) for p in eliminated_data]
+
     grok_analysis = await generate_group_result(
-        winners_data, eliminated_data, game["scenario"], game["year"], duration_minutes)
+        winners_summary, eliminated_summary, game["scenario"], game["year"], duration_minutes)
 
     bc_amount = 125 if duration_minutes >= 20 else 75
 
+    def short_cards(p):
+        opened = [c for i, c in enumerate(p["cards"]) if i in p.get("opened_indices", set())]
+        if not opened:
+            return ""
+        return ", ".join([c["name"] for c in opened[:3]])
+
     eliminated_list = "\n".join([
-        f"{i+1}. {p['full_name']} ({p['card_name']})"
+        f"{i+1}. {p['full_name']} — {short_cards(p)}"
         for i, p in enumerate(eliminated_data)])
-    winners_list = "\n".join([f"🥇 {p['full_name']} ({p['card_name']})" for p in winners_data])
+    winners_list = "\n".join([f"🥇 {p['full_name']} — {short_cards(p)}" for p in winners_data])
 
     await bot.send_message(chat_id,
         f"📊 <b>O'YIN NATIJASI</b>\n\n"
