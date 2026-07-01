@@ -616,3 +616,15 @@ def give_first_reveal_bonus(lobby_id, user_id, is_first: bool):
         add_bc(user_id, 3)
         return True
     return False
+
+def get_user_active_lobby(user_id):
+    """Foydalanuvchi qaysi aktiv yoki kutayotgan lobbyda ekanini topish"""
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("""SELECT l.* FROM lobbies l
+                 JOIN lobby_players lp ON l.id = lp.lobby_id
+                 WHERE lp.user_id=? AND l.status IN ('waiting', 'active')
+                 ORDER BY l.created_at DESC LIMIT 1""", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    return dict(row) if row else None
