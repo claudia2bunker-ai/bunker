@@ -307,7 +307,7 @@ async def cmd_newgame(msg: Message):
     await msg.answer(
         f"🏠 <b>Yangi Bunker o'yini #{lobby_id}!</b>\n\n"
         f"👤 Yaratuvchi: {msg.from_user.full_name}\n"
-        f"👥 O'yinchilar: 1/7 (minimum 4)\n\n"
+        f"👥 O'yinchilar: 1/10 (minimum 4)\n\n"
         f"▶️ Qo'shilish: /join\n"
         f"👁 O'yinchilar: /players\n"
         f"🚀 Boshlash: /start_game\n"
@@ -321,7 +321,7 @@ async def cmd_join(msg: Message):
         await msg.answer("❌ Bu guruhda ochiq lobby yo'q!\nYangi o'yin: /newgame")
         return
     lobby_id = lobbies[0]["id"]
-    if get_lobby_player_count(lobby_id) >= 7:
+    if get_lobby_player_count(lobby_id) >= 10:
         await msg.answer("❌ Lobby to'ldi!")
         return
     get_or_create_user(msg.from_user.id, msg.from_user.username or "", msg.from_user.full_name)
@@ -335,7 +335,7 @@ async def cmd_join(msg: Message):
     join_lobby(lobby_id, msg.from_user.id, random.choice(cards)["id"])
     count = get_lobby_player_count(lobby_id)
     await msg.answer(
-        f"✅ <b>{msg.from_user.full_name}</b> lobbyga qo'shildi!\n👥 O'yinchilar: {count}/7",
+        f"✅ <b>{msg.from_user.full_name}</b> lobbyga qo'shildi!\n👥 O'yinchilar: {count}/10",
         parse_mode="HTML")
 
 @group_router.message(Command("leave"))
@@ -354,7 +354,7 @@ async def cmd_leave(msg: Message):
     leave_lobby(lobby["id"], msg.from_user.id)
     count = get_lobby_player_count(lobby["id"])
     await msg.answer(
-        f"🚪 <b>{msg.from_user.full_name}</b> lobbydan chiqdi.\n👥 Qolgan: {count}/7",
+        f"🚪 <b>{msg.from_user.full_name}</b> lobbydan chiqdi.\n👥 Qolgan: {count}/10",
         parse_mode="HTML")
 
 @group_router.message(Command("players"))
@@ -368,7 +368,7 @@ async def cmd_players(msg: Message):
     if not players:
         await msg.answer("👥 Hali hech kim qo'shilmagan!")
         return
-    text = f"👥 <b>Lobby #{lobby_id} ({len(players)}/7):</b>\n\n"
+    text = f"👥 <b>Lobby #{lobby_id} ({len(players)}/10):</b>\n\n"
     for i, p in enumerate(players, 1):
         text += f"{i}. {p['full_name']}\n"
     needed = max(0, 4-len(players))
@@ -686,7 +686,7 @@ async def callback_handler(call: CallbackQuery):
         await edit(
             f"🏠 <b>Lobby #{lobby_id} yaratildi!</b>\n\n"
             f"👤 Yaratuvchi: {call.from_user.full_name}\n"
-            f"👥 O'yinchilar: 1/7 | ⏳ Min: 4 kishi\n\n"
+            f"👥 O'yinchilar: 1/10 | ⏳ Min: 4 kishi\n\n"
             f"Boshqalar qo'shilishini kuting!",
             lobby_action_keyboard(lobby_id, is_creator=True, joined=True))
 
@@ -705,7 +705,7 @@ async def callback_handler(call: CallbackQuery):
         if not lobby or lobby["status"] != "waiting":
             await call.answer("❌ Lobby mavjud emas yoki o'yin boshlangan!", show_alert=True)
             return
-        if get_lobby_player_count(lobby_id) >= 7:
+        if get_lobby_player_count(lobby_id) >= 10:
             await call.answer("❌ Lobby to'ldi!", show_alert=True)
             return
         if not is_in_lobby(lobby_id, uid):
@@ -717,7 +717,7 @@ async def callback_handler(call: CallbackQuery):
         new_count = get_lobby_player_count(lobby_id)
         is_creator = lobby["creator_id"] == uid
         await edit(
-            f"🏠 <b>Lobby #{lobby_id}</b>\n\n👥 O'yinchilar: {new_count}/7\n✅ Siz lobbydasiz!",
+            f"🏠 <b>Lobby #{lobby_id}</b>\n\n👥 O'yinchilar: {new_count}/10\n✅ Siz lobbydasiz!",
             lobby_action_keyboard(lobby_id, is_creator=is_creator, joined=True))
 
     elif data.startswith("leave_lobby_"):
@@ -739,7 +739,7 @@ async def callback_handler(call: CallbackQuery):
             await call.answer("✅ Lobbydan chiqdingiz!")
             new_count = get_lobby_player_count(lobby_id)
             await edit(
-                f"🏠 <b>Lobby #{lobby_id}</b>\n\n👥 O'yinchilar: {new_count}/7\n\n"
+                f"🏠 <b>Lobby #{lobby_id}</b>\n\n👥 O'yinchilar: {new_count}/10\n\n"
                 f"Qaytib qo'shilish uchun tugmani bosing:",
                 lobby_action_keyboard(lobby_id, joined=False))
         else:
@@ -1009,7 +1009,6 @@ async def finish_game(chat_id, lobby_id):
     game = get_game(lobby_id)
     winners = get_winners(lobby_id)
     winners_data = [game["players"][wid] for wid in winners if wid in game["players"]]
-    # Birinchi chiqarilgandan oxirigacha
     eliminated_data = [game["players"][uid] for uid in game["eliminated"] if uid in game["players"]]
     winner_names = " va ".join([p["full_name"] for p in winners_data])
     duration_minutes = game["round"] * 2
@@ -1018,42 +1017,51 @@ async def finish_game(chat_id, lobby_id):
         f"🎉 <b>O'YIN TUGADI!</b>\n\n🏆 G'oliblar: <b>{winner_names}</b>\n\n⏳ Grok tahlili...",
         parse_mode="HTML")
 
-    # Grok uchun "card_name"/"card_desc"/"card_type" formatiga moslashtirish
-    # (barcha 8 ta xususiyatni birlashtirib beramiz)
-    def summarize_player(p):
-        cards_summary = "; ".join([f"{c['card_type']}: {c['name']} ({c['description']})" for c in p["cards"]])
-        return {
+    # Grok uchun g'oliblar: barcha 8 ta karta (ochilgan-ochilmagan farqsiz)
+    winners_for_grok = []
+    for p in winners_data:
+        winners_for_grok.append({
             "full_name": p["full_name"],
-            "card_type": "Xususiyatlar",
-            "card_name": cards_summary,
-            "card_desc": ""
-        }
+            "all_cards": p.get("cards", [])
+        })
 
-    winners_summary = [summarize_player(p) for p in winners_data]
-    eliminated_summary = [summarize_player(p) for p in eliminated_data]
+    # Chiqarilganlar: faqat ochilgan kartalar
+    eliminated_for_grok = []
+    for p in eliminated_data:
+        opened = [c for i, c in enumerate(p.get("cards", [])) if i in p.get("opened_indices", set())]
+        eliminated_for_grok.append({
+            "full_name": p["full_name"],
+            "opened_cards": opened
+        })
 
     grok_analysis = await generate_group_result(
-        winners_summary, eliminated_summary, game["scenario"], game["year"], duration_minutes)
+        winners_for_grok, eliminated_for_grok, game["scenario"], game["year"], duration_minutes)
 
     bc_amount = 125 if duration_minutes >= 20 else 75
 
-    def short_cards(p):
-        opened = [c for i, c in enumerate(p["cards"]) if i in p.get("opened_indices", set())]
-        if not opened:
-            return ""
-        return ", ".join([c["name"] for c in opened[:3]])
+    # Natija xabari uchun g'oliblar: barcha kartalar ko'rsatilsin
+    def all_cards_str(p):
+        return " | ".join([f"{c['card_type']}: {c['name']}" for c in p.get("cards", [])])
+
+    # Chiqarilganlar: ochilganlari
+    def opened_cards_str(p):
+        opened = [c for i, c in enumerate(p.get("cards", [])) if i in p.get("opened_indices", set())]
+        return ", ".join([c["name"] for c in opened]) if opened else "karta ochmagan"
+
+    winners_list = "\n".join([
+        f"🥇 <b>{p['full_name']}</b>\n   {all_cards_str(p)}"
+        for p in winners_data])
 
     eliminated_list = "\n".join([
-        f"{i+1}. {p['full_name']} — {short_cards(p)}"
+        f"{i+1}. {p['full_name']} — {opened_cards_str(p)}"
         for i, p in enumerate(eliminated_data)])
-    winners_list = "\n".join([f"🥇 {p['full_name']} — {short_cards(p)}" for p in winners_data])
 
     await bot.send_message(chat_id,
         f"📊 <b>O'YIN NATIJASI</b>\n\n"
         f"☢️ {game['scenario']} ({game['year']})\n"
         f"⏱️ {duration_minutes} daqiqa | {game['round']-1} raund\n\n"
-        f"🏆 <b>G'oliblar:</b>\n{winners_list}\n\n"
-        f"💀 <b>Chiqarilganlar (tartibda):</b>\n{eliminated_list}\n\n"
+        f"🏆 <b>G'oliblar (barcha xususiyatlari):</b>\n{winners_list}\n\n"
+        f"💀 <b>Chiqarilganlar (ochilgan kartalar):</b>\n{eliminated_list}\n\n"
         f"🔮 <b>Grok tahlili:</b>\n<i>{grok_analysis}</i>\n\n"
         f"💰 G'oliblar +{bc_amount} BC oldi!\n👉 Keyingi o'yin: /newgame",
         parse_mode="HTML")
