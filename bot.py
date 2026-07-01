@@ -133,6 +133,26 @@ async def start(msg: Message):
             pass
 
     me = await bot.get_me()
+    # Foydalanuvchi biron lobbyda yoki aktiv o'yindami?
+    active_lobby = get_user_active_lobby(uid)
+    if active_lobby:
+        lobby_id = active_lobby["id"]
+        count = get_lobby_player_count(lobby_id)
+        is_creator = active_lobby["creator_id"] == uid
+        if active_lobby["status"] == "waiting":
+            await msg.answer(
+                f"🏠 <b>Lobby #{lobby_id}</b>\n\n"
+                f"👥 O'yinchilar: {count}/10\n"
+                f"✅ Siz lobbydasiz!",
+                parse_mode="HTML",
+                reply_markup=lobby_action_keyboard(lobby_id, is_creator=is_creator, joined=True))
+        else:
+            await msg.answer(
+                f"🎮 <b>O'yin #{lobby_id} davom etmoqda!</b>\n\n"
+                f"Kartangizni oching yoki ovoz bering.",
+                parse_mode="HTML")
+        return
+
     await msg.answer(
         f"☢️ <b>BUNKER</b> ga xush kelibsiz, {msg.from_user.first_name}!\n\n"
         f"Apokalipsis boshlanmoqda. Bunkerda joy cheklangan.\n"
@@ -557,9 +577,22 @@ async def callback_handler(call: CallbackQuery):
 
     # ── BACK ──
     elif data == "back_main":
+        # Agar foydalanuvchi lobbydа bo'lsa — asosiy menyuga emas, lobby ekraniga qaytsin
+        active_lobby = get_user_active_lobby(uid)
+        if active_lobby and active_lobby["status"] == "waiting":
+            lobby_id = active_lobby["id"]
+            count = get_lobby_player_count(lobby_id)
+            is_creator = active_lobby["creator_id"] == uid
+            await edit(
+                f"🏠 <b>Lobby #{lobby_id}</b>\n\n"
+                f"👥 O'yinchilar: {count}/10\n"
+                f"✅ Siz lobbydasiz!",
+                lobby_action_keyboard(lobby_id, is_creator=is_creator, joined=True))
+            return
         user = get_user(uid)
         bc = user['bc_balance'] if user else 0
-        await edit(f"🏠 Asosiy menyu\n💰 BC: {bc}", main_menu())
+        me = await bot.get_me()
+        await edit(f"🏠 Asosiy menyu\n💰 BC: {bc}", main_menu(me.username))
 
     elif data == "profile":
         u = get_user(uid)
@@ -681,19 +714,39 @@ async def callback_handler(call: CallbackQuery):
         if existing:
             await call.answer("❌ Sizda allaqachon ochiq lobby bor!", show_alert=True)
             return
+        # 10 BC to'lov
+        if not spend_bc(uid, 10):
+            u = get_user(uid)
+            await edit(
+                f"💰 <b>Lobby ochish uchun 10 BC kerak!</b>\n\n"
+                f"Sizda: {u['bc_balance'] if u else 0} BC\n\n"
+                f"BC to'plash yo'llari:\n"
+                f"• ☀️ Kunlik bonus: /bonus\n"
+                f"• 🎮 O'yin o'ynash\n"
+                f"• 🎁 Do'st taklif: /refer",
+                back_keyboard("back_main"))
+            return
         lobby_id = create_lobby(uid, cid)
-        join_lobby(lobby_id, uid, random.choice(cards)["id"])
+        join_lobby(lobby_id, uid)
         await edit(
             f"🏠 <b>Lobby #{lobby_id} yaratildi!</b>\n\n"
             f"👤 Yaratuvchi: {call.from_user.full_name}\n"
-            f"👥 O'yinchilar: 1/10 | ⏳ Min: 4 kishi\n\n"
+            f"👥 O'yinchilar: 1/10 | ⏳ Min: 4 kishi\n"
+            f"💰 10 BC to'landi\n\n"
             f"Boshqalar qo'shilishini kuting!",
             lobby_action_keyboard(lobby_id, is_creator=True, joined=True))
 
     elif data == "view_lobbies":
-        lobbies = get_active_lobbies()
+        # Faqat private (botda ochilgan) lobbylar ko'rsatilsin
+        # Guruhda ochilgan lobbylar ko'rsatilmasin
+        all_lobbies = get_active_lobbies()
+        # chat_id manfiy bo'lsa — guruh lobbyi, musbat bo'lsa — private
+        lobbies = [l for l in all_lobbies if l.get("chat_id", 0) > 0]
         if not lobbies:
-            await edit("😔 Hozircha ochiq lobby yo'q.", back_keyboard("back_main"))
+            await edit(
+                "Hozircha ochiq lobby yoq.\n\n"
+                "Guruhda oyin boshlash uchun guruhga oting va /newgame yozing.",
+                back_keyboard("back_main"))
             return
         for l in lobbies:
             l["player_count"] = get_lobby_player_count(l["id"])
