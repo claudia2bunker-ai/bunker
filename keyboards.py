@@ -67,7 +67,7 @@ def lobby_action_keyboard(lobby_id, is_creator=False, joined=False):
         rows.append([InlineKeyboardButton(text="🚪 Lobbydan chiqish", callback_data=f"leave_lobby_{lobby_id}")])
     if is_creator:
         rows.append([InlineKeyboardButton(text="▶️ O'yinni boshlash", callback_data=f"start_game_{lobby_id}")])
-    rows.append([InlineKeyboardButton(text="🔙 Orqaga", callback_data="view_lobbies")])
+    # Orqaga yo'q — lobbyda bo'lganlar faqat chiqish tugmasini ko'rsin
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 def reveal_card_keyboard(lobby_id):
