@@ -304,6 +304,15 @@ async def text_handler(msg: Message):
         user_states.pop(uid, None)
         await msg.answer(f"✅ Karta #{card_id} yangilandi!", reply_markup=admin_menu())
 
+    elif isinstance(state, dict) and state.get("step") == "bulk_upload":
+        user_states.pop(uid, None)
+        await msg.answer("⏳ Kartalar tahlil qilinmoqda...")
+        saved, failed = await parse_and_save_cards(text)
+        result = f"✅ <b>{saved} ta karta saqlandi!</b>"
+        if failed:
+            result += f"\n⚠️ {len(failed)} ta karta saqlanmadi:\n" + "\n".join(f"• {f}" for f in failed[:5])
+        await msg.answer(result, parse_mode="HTML", reply_markup=admin_menu())
+
 # ═══════════════════════════════════════════════════════════
 # GROUP HANDLERS
 # ═══════════════════════════════════════════════════════════
@@ -937,6 +946,23 @@ async def callback_handler(call: CallbackQuery):
             text += f"🆔 <b>ID:{c['id']}</b> | {c['card_type']}\n👤 {c['name']}\n📝 <i>{c['description']}</i>\n\n"
         await edit(text, back_keyboard("admin_panel"))
 
+    elif data == "admin_bulk_upload":
+        if uid != ADMIN_ID:
+            return
+        user_states[uid] = {"step": "bulk_upload"}
+        await edit(
+            "📦 <b>Ommaviy karta yuklash</b>\n\n"
+            "Kartalarni quyidagi formatda yuboring:\n\n"
+            "<code>emoji Nom: Tavsif</code>\n\n"
+            "Masalan:\n"
+            "<code>🏺 Arxeolog: Qadimgi xarobalardan kerakli resurslarni topadi\n"
+            "👩‍🏫 O'qituvchi: Yangi avlodga bilim beradi\n"
+            "⛏️ Geolog: Yer osti qatlamlarini tadqiq qiladi</code>\n\n"
+            "Bot karta turini <b>o'zi aniqlaydi</b>!\n"
+            "Bir xabarda ko'p karta yuborsa ham bo'ladi.",
+            back_keyboard("admin_panel")
+        )
+
     elif data == "admin_edit_card":
         if uid != ADMIN_ID:
             return
@@ -1214,6 +1240,78 @@ async def on_bot_added(event):
         conn.commit()
         conn.close()
         end_game(chat.id)
+
+async def parse_and_save_cards(text: str):
+    """
+    Admin yuborgan matnni tahlil qilib kartalarni bazaga saqlaydi.
+    Grok yordamida karta turini aniqlaydi.
+    Format: "emoji Nom: Tavsif" yoki "Nom: Tavsif"
+    """
+    import re
+
+    # Karta turlarini aniqlash uchun kalit so'zlar
+    TYPE_KEYWORDS = {
+        "👮 Kasb": ["kasb","mutaxassis","xodim","muhandis","shifokor","o'qituvchi",
+                    "arxeolog","geolog","mexanik","fermer","harbiy","oshpaz","psixolog",
+                    "biolog","kimyogar","dasturchi","quruvchi","haydovchi","pilot",
+                    "dengizchi","elektrchi","hunarmand","rassom","yozuvchi","sportchi"],
+        "💪 Salomatlik": ["sog'lom","kasal","nogir","diabetik","astma","yurak","allergiya",
+                          "o'pkа","blind","kar","ortopedik","immunitet","gipertenziya"],
+        "📖 Biografiya": ["yosh","yoshli","ayol","erkak","farzand","oilali","beva","talaba",
+                          "nafaqaxo'r","yolg'iz","ota","ona","bola","o'smir","keksa"],
+        "🎯 Hunar": ["qurol","meditsina","tibbiy","qishloq","elektr","kompyuter","til",
+                     "muloqot","tamirlash","qurilish","ovchi","baliq","tikuvchi","pazandalik"],
+        "🧬 Genetika": ["genetik","dna","irsiy","mutatsiya","immunitet","kuchli","zaif",
+                        "chidamli","allergen","qon","reflektor"],
+        "🧠 Aql": ["iq","aqliy","matematik","strategik","mantiqiy","iqtidor","ziyrak",
+                   "yodlash","analitik","professor","intellekt","bilim"],
+        "❤️ Ijtimoiy": ["rahbar","jamoaviy","muloqot","ishontira","do'stona","qarama-qarshi",
+                        "yolg'izlik","introvert","ekstravert","haydovchi","psixolog","ta'sir"],
+        "🎒 Bagaj": ["bug'doy","don","dori","asbob","qurol","kitob","urug'","urugʻ","tuxum",
+                     "konserva","vitamin","kiyim","pul","oltin","tosh","texnika","aksesuar",
+                     "oziq","ovqat","suv","generator","batareya","radio"],
+    }
+
+    def detect_type(name: str, desc: str) -> str:
+        text_lower = (name + " " + desc).lower()
+        for card_type, keywords in TYPE_KEYWORDS.items():
+            for kw in keywords:
+                if kw in text_lower:
+                    return card_type
+        return "👮 Kasb"  # default
+
+    # Matnni qatorlarga ajrat
+    lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
+
+    saved = 0
+    failed = []
+
+    for line in lines:
+        # "emoji Nom: Tavsif" yoki "Nom: Tavsif" formatini tahlil qil
+        # Emoji bor bo'lishi mumkin — ikki holatni tekshiramiz
+        if ":" not in line:
+            failed.append(line[:40])
+            continue
+
+        # Ikki qismga bo'l: nom va tavsif
+        colon_idx = line.index(":")
+        name_part = line[:colon_idx].strip()
+        desc_part = line[colon_idx+1:].strip()
+
+        if not name_part or not desc_part:
+            failed.append(line[:40])
+            continue
+
+        # Emoji ni nomdan ajrat (agar bor bo'lsa)
+        # Emoji odatda 1-2 ta unicode belgi bo'ladi
+        clean_name = name_part.strip()
+
+        card_type = detect_type(clean_name, desc_part)
+        create_card(card_type, clean_name, desc_part)
+        saved += 1
+
+    return saved, failed
+
 
 async def main():
     init_db()
