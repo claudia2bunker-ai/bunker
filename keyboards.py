@@ -18,6 +18,7 @@ def main_menu(bot_username="bunker_uzbbot"):
 def admin_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Karta yaratish", callback_data="admin_create_card")],
+        [InlineKeyboardButton(text="📦 Ommaviy yuklash", callback_data="admin_bulk_upload")],
         [InlineKeyboardButton(text="📋 Mavjud kartalar", callback_data="admin_view_cards")],
         [InlineKeyboardButton(text="✏️ Kartani tahrirlash", callback_data="admin_edit_card")],
         [InlineKeyboardButton(text="🔙 Orqaga", callback_data="back_main")],
