@@ -13,8 +13,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+BOT_TOKEN = os.getenv("8964759983:AAH1CB9xbHGi8g0_e3gUh0u1_ydtI8jTA8k")
+ADMIN_ID = int(os.getenv("6060306988"))
 MAIN_CHANNEL = "https://t.me/+Ypej9hA5AC8wNTQy"
 # Kanal ID olish: kanalga @userinfobot qo'shing va /start yozing
 # Yoki kanal ga bot admin qilib, biror xabar forward qilib @RawDataBot ga yuboring
