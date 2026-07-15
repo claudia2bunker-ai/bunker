@@ -30,42 +30,6 @@ group_router = Router()
 private_router.message.filter(F.chat.type == "private")
 group_router.message.filter(F.chat.type.in_({"group", "supergroup"}))
 
-# ── Guruhda o'yin bo'lsa lobbyga qo'shilmaganlar yoza olmasin ──
-@group_router.message(F.text & ~F.text.startswith("/"))
-async def block_non_players(msg: Message):
-    chat_id = msg.chat.id
-    uid = msg.from_user.id
-
-    # Bu guruhda faol o'yin bormi?
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute("SELECT id FROM lobbies WHERE chat_id=? AND status='active'", (chat_id,))
-    active = c.fetchone()
-    conn.close()
-
-    if not active:
-        return  # O'yin yo'q — hammaga ruxsat
-
-    lobby_id = active[0]
-    game = get_game(lobby_id)
-
-    if not game:
-        return  # O'yin xotirada yo'q — ruxsat
-
-    # O'yinda qatnashuvchi yoki chiqarilganmi?
-    is_participant = (
-        uid in game["alive_players"] or
-        uid in game.get("eliminated", [])
-    )
-
-    if not is_participant:
-        # Xabarni o'chir
-        try:
-            await msg.delete()
-        except:
-            pass
-
-
 
 dp.include_router(group_router)
 dp.include_router(private_router)
@@ -283,11 +247,19 @@ async def text_handler(msg: Message):
             card = get_card_by_id(card_id)
             if card:
                 user_states[uid] = {"step":"edit_name","card_id":card_id}
+                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="✏️ Tahrirlash", callback_data=f"do_edit_{card_id}")],
+                    [InlineKeyboardButton(text="🗑️ O'chirish", callback_data=f"delete_card_{card_id}")],
+                    [InlineKeyboardButton(text="🔙 Orqaga", callback_data="admin_panel")],
+                ])
                 await msg.answer(
-                    f"📋 <b>Karta #{card_id}:</b>\n🏷️ {card['card_type']}\n"
-                    f"👤 {card['name']}\n📝 {card['description']}\n\n"
-                    f"Yangi nomini yozing (<code>-</code> = o'zgartirma):",
-                    parse_mode="HTML")
+                    f"📋 <b>Karta #{card_id}:</b>\n"
+                    f"🏷️ {card['card_type']}\n"
+                    f"👤 {card['name']}\n"
+                    f"📝 {card['description']}\n\n"
+                    f"Nima qilmoqchisiz?",
+                    parse_mode="HTML", reply_markup=kb)
             else:
                 await msg.answer(f"❌ ID {card_id} topilmadi!")
         except ValueError:
@@ -305,12 +277,13 @@ async def text_handler(msg: Message):
         await msg.answer(f"✅ Karta #{card_id} yangilandi!", reply_markup=admin_menu())
 
     elif isinstance(state, dict) and state.get("step") == "bulk_upload":
+        card_type = state.get("card_type", "👮 Kasb")
         user_states.pop(uid, None)
-        await msg.answer("⏳ Kartalar tahlil qilinmoqda...")
-        saved, failed = await parse_and_save_cards(text)
-        result = f"✅ <b>{saved} ta karta saqlandi!</b>"
+        await msg.answer(f"⏳ <b>{card_type}</b> turidagi kartalar saqlanmoqda...", parse_mode="HTML")
+        saved, failed = await parse_and_save_cards(text, card_type)
+        result = f"✅ <b>{saved} ta karta saqlandi!</b>\n🏷️ Tur: {card_type}"
         if failed:
-            result += f"\n⚠️ {len(failed)} ta karta saqlanmadi:\n" + "\n".join(f"• {f}" for f in failed[:5])
+            result += f"\n\n⚠️ {len(failed)} ta saqlanmadi:\n" + "\n".join(f"• {f}" for f in failed[:5])
         await msg.answer(result, parse_mode="HTML", reply_markup=admin_menu())
 
 # ═══════════════════════════════════════════════════════════
@@ -820,27 +793,41 @@ async def callback_handler(call: CallbackQuery):
         players = get_lobby_players(lobby_id)
         scenario, year = get_random_scenario()
         update_lobby_status(lobby_id, "active", scenario, year)
-        init_game_state(lobby_id, players, scenario, year)
+        # Private lobby uchun chat_id = 0 (har o'yinchiga alohida PM)
+        game_state = init_game_state(lobby_id, players, scenario, year)
+        # Agar private lobby bo'lsa (chat_id > 0 — private chat)
+        # lobby["chat_id"] bu yaratuvchining private chat ID si
+        # Biz uni 0 ga o'zgartiramiz — start_voting_phase barcha PM ga yuborsin
+        game_state["is_private_lobby"] = True
         scenario_desc = await get_scenario_description(scenario, year)
         player_list = "\n".join([f"• {p['full_name']}" for p in players])
-        me = await bot.get_me()
-        await edit(
+
+        start_text = (
             f"🚨 <b>O'YIN BOSHLANDI!</b>\n\n📅 Yil: <b>{year}</b>\n"
             f"⚡ Voqea: <b>{scenario}</b>\n\n<i>{scenario_desc}</i>\n\n"
             f"👥 Ishtirokchilar:\n{player_list}\n\n"
             f"🃏 Har biriga 8 ta yashirin xususiyat berildi!\n"
-            f"⚠️ Botga o'tib 1-raund kartangizni tanlab oching!\n👉 @{me.username}")
+            f"1-raund kartangizni tanlab oching!"
+        )
+        # Barcha o'yinchilarga PM da o'yin boshlandi xabari
         for player in players:
             try:
                 unopened = get_unopened_cards(lobby_id, player["user_id"])
                 await bot.send_message(
                     chat_id=player["user_id"],
-                    text=f"🃏 <b>Sizda 8 ta yashirin xususiyat bor!</b>\n\n"
-                         f"1-raund uchun qaysi birini ochmoqchisiz?",
+                    text=start_text,
+                    parse_mode="HTML")
+                await bot.send_message(
+                    chat_id=player["user_id"],
+                    text=f"🃏 <b>1-raund — Qaysi xususiyatingizni ochmoqchisiz?</b>",
                     parse_mode="HTML",
                     reply_markup=card_choice_keyboard(lobby_id, unopened))
             except Exception as e:
                 logging.error(f"PM yuborilmadi {player['user_id']}: {e}")
+        await edit(
+            f"🚨 <b>O'YIN BOSHLANDI!</b>\n\n"
+            f"Barcha {len(players)} o'yinchiga karta yuborildi!\n"
+            f"Hamma botda kartasini tanlab ochsin.")
 
     elif data.startswith("openidx_"):
         parts = data.split("_")
@@ -863,11 +850,23 @@ async def callback_handler(call: CallbackQuery):
             return
 
         player = game["players"].get(uid)
+
+        # PM da ochilgan karta + barcha kartalar holati
+        all_cards = player.get("cards", [])
+        opened_indices = player.get("opened_indices", set())
+        cards_status = ""
+        for i, c in enumerate(all_cards):
+            if i in opened_indices:
+                cards_status += f"✅ {c['card_type']}: <b>{c['name']}</b>\n"
+            else:
+                cards_status += f"🔒 {c['card_type']}: ???\n"
+
         await edit(
-            f"✅ <b>Siz ochdingiz:</b>\n\n"
+            f"✅ <b>Ochdingiz:</b>\n\n"
             f"🏷️ {opened_card['card_type']}\n"
             f"👤 <b>{opened_card['name']}</b>\n"
-            f"📝 <i>{opened_card['description']}</i>"
+            f"📝 <i>{opened_card['description']}</i>\n\n"
+            f"<b>Barcha kartalaringiz:</b>\n{cards_status}"
         )
 
         # Tezlik bonusi — faqat 1-raundda, birinchi ochuvchiga
@@ -949,25 +948,95 @@ async def callback_handler(call: CallbackQuery):
     elif data == "admin_bulk_upload":
         if uid != ADMIN_ID:
             return
-        user_states[uid] = {"step": "bulk_upload"}
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton as IKB
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [IKB(text="👮 Kasb", callback_data="bulk_type_kasb"),
+             IKB(text="💪 Salomatlik", callback_data="bulk_type_salomatlik")],
+            [IKB(text="📖 Biografiya", callback_data="bulk_type_biografiya"),
+             IKB(text="🎯 Hunar", callback_data="bulk_type_hunar")],
+            [IKB(text="🧬 Genetika", callback_data="bulk_type_genetika"),
+             IKB(text="🧠 Aql", callback_data="bulk_type_aql")],
+            [IKB(text="❤️ Ijtimoiy", callback_data="bulk_type_ijtimoiy"),
+             IKB(text="🎒 Bagaj", callback_data="bulk_type_bagaj")],
+            [IKB(text="🔙 Orqaga", callback_data="admin_panel")],
+        ])
+        await edit("📦 <b>Ommaviy yuklash</b>\n\nKarta turini tanlang:", kb)
+
+    elif data.startswith("bulk_type_"):
+        if uid != ADMIN_ID:
+            return
+        type_map = {
+            "bulk_type_kasb": "👮 Kasb",
+            "bulk_type_salomatlik": "💪 Salomatlik",
+            "bulk_type_biografiya": "📖 Biografiya",
+            "bulk_type_hunar": "🎯 Hunar",
+            "bulk_type_genetika": "🧬 Genetika",
+            "bulk_type_aql": "🧠 Aql",
+            "bulk_type_ijtimoiy": "❤️ Ijtimoiy",
+            "bulk_type_bagaj": "🎒 Bagaj",
+        }
+        selected_type = type_map.get(data, "👮 Kasb")
+        user_states[uid] = {"step": "bulk_upload", "card_type": selected_type}
         await edit(
-            "📦 <b>Ommaviy karta yuklash</b>\n\n"
-            "Kartalarni quyidagi formatda yuboring:\n\n"
-            "<code>emoji Nom: Tavsif</code>\n\n"
-            "Masalan:\n"
-            "<code>🏺 Arxeolog: Qadimgi xarobalardan kerakli resurslarni topadi\n"
-            "👩‍🏫 O'qituvchi: Yangi avlodga bilim beradi\n"
-            "⛏️ Geolog: Yer osti qatlamlarini tadqiq qiladi</code>\n\n"
-            "Bot karta turini <b>o'zi aniqlaydi</b>!\n"
-            "Bir xabarda ko'p karta yuborsa ham bo'ladi.",
-            back_keyboard("admin_panel")
+            f"📦 <b>Ommaviy yuklash — {selected_type}</b>\n\n"
+            f"Kartalarni quyidagi formatda yuboring:\n\n"
+            f"<code>Nom: Tavsif\nNom: Tavsif</code>\n\n"
+            f"Masalan:\n"
+            f"<code>Arxeolog: Qadimgi xarobalardan resurs topadi\nGeolog: Yer osti qatlamlarini tadqiq qiladi</code>\n\n"
+            f"Bir xabarda ko'p karta yuborsa ham bo'ladi!",
+            back_keyboard("admin_bulk_upload")
         )
 
     elif data == "admin_edit_card":
         if uid != ADMIN_ID:
             return
         user_states[uid] = {"step":"edit_id"}
-        await edit("✏️ Karta ID sini yozing:", back_keyboard("admin_panel"))
+        await edit("✏️ Tahrirlash yoki o'chirish uchun karta ID sini yozing:", back_keyboard("admin_panel"))
+
+    elif data.startswith("do_edit_"):
+        if uid != ADMIN_ID:
+            return
+        card_id = int(data.split("_")[-1])
+        card = get_card_by_id(card_id)
+        if card:
+            user_states[uid] = {"step":"edit_name","card_id":card_id}
+            await edit(
+                f"✏️ <b>Karta #{card_id} tahriri</b>\n\n"
+                f"Yangi nomini yozing (<code>-</code> = o'zgartirma):",
+            )
+        else:
+            await edit("❌ Karta topilmadi!", back_keyboard("admin_panel"))
+
+    elif data.startswith("delete_card_"):
+        if uid != ADMIN_ID:
+            return
+        card_id = int(data.split("_")[-1])
+        card = get_card_by_id(card_id)
+        if card:
+            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Ha, o'chir", callback_data=f"confirm_delete_{card_id}")],
+                [InlineKeyboardButton(text="❌ Yo'q", callback_data="admin_panel")],
+            ])
+            await edit(
+                f"🗑️ <b>O'chirishni tasdiqlang</b>\n\n"
+                f"🆔 ID: {card_id}\n"
+                f"👤 {card['name']}\n"
+                f"📝 {card['description']}\n\n"
+                f"Bu amalni bekor qilib bo'lmaydi!",
+                kb
+            )
+        else:
+            await edit("❌ Karta topilmadi!", back_keyboard("admin_panel"))
+
+    elif data.startswith("confirm_delete_"):
+        if uid != ADMIN_ID:
+            return
+        card_id = int(data.split("_")[-1])
+        if delete_card(card_id):
+            await edit(f"✅ Karta #{card_id} o'chirildi!", back_keyboard("admin_panel"))
+        else:
+            await edit("❌ Xatolik yuz berdi!", back_keyboard("admin_panel"))
 
 # ═══════════════════════════════════════════════════════════
 # O'YIN FAZALARI
@@ -981,22 +1050,23 @@ async def start_card_round(chat_id, lobby_id):
     reset_round_reveals(lobby_id)
     game["phase"] = "card_reveal"
 
-    await bot.send_message(chat_id,
-        f"🃏 <b>RAUND {game['round']} — KARTA OCHISH VAQTI!</b>\n\n"
-        f"Barcha tirik o'yinchilar botda yangi xususiyatini tanlab ochsin!",
-        parse_mode="HTML")
+    is_private = game.get("is_private_lobby", False)
+    round_text = f"🃏 <b>RAUND {game['round']} — Kartangizni tanlang!</b>"
+
+    if not is_private and chat_id:
+        await bot.send_message(chat_id,
+            f"{round_text}\n\nBarcha tirik o'yinchilar botda yangi kartasini tanlab ochsin!",
+            parse_mode="HTML")
 
     for player_uid in game["alive_players"]:
         unopened = get_unopened_cards(lobby_id, player_uid)
         if not unopened:
-            # Hamma kartalar tugagan — avtomatik o'tkazib yuborish
             game["revealed_this_round"].add(player_uid)
             continue
         try:
             await bot.send_message(
                 player_uid,
-                f"🃏 <b>Raund {game['round']}</b>\n\n"
-                f"Qaysi xususiyatingizni ochmoqchisiz?",
+                f"{round_text}\n\nQaysi xususiyatingizni ochmoqchisiz?",
                 parse_mode="HTML",
                 reply_markup=card_choice_keyboard(lobby_id, unopened)
             )
@@ -1004,7 +1074,6 @@ async def start_card_round(chat_id, lobby_id):
             logging.error(f"PM yuborilmadi {player_uid}: {e}")
             game["revealed_this_round"].add(player_uid)
 
-    # Agar hamma allaqachon avtomatik belgilangan bo'lsa (kartalar tugagan)
     if all_alive_revealed_this_round(lobby_id):
         await asyncio.sleep(1)
         await start_voting_phase(chat_id, lobby_id)
@@ -1015,21 +1084,47 @@ async def start_voting_phase(chat_id, lobby_id):
         return
     game["phase"] = "voting"
     players = [game["players"][uid] for uid in game["alive_players"]]
+    is_private = game.get("is_private_lobby", False)
 
-    await bot.send_message(chat_id,
+    muhokama_text = (
         f"⏰ <b>1 DAQIQA MUHOKAMA! (Raund {game['round']})</b>\n\n"
-        "Kimni bunkerdan chiqarasiz? Muhokama qiling!\n60 soniyadan so'ng ovoz berish boshlanadi...",
-        parse_mode="HTML")
+        "Kimni bunkerdan chiqarasiz? Muhokama qiling!\n"
+        "60 soniyadan so'ng ovoz berish boshlanadi..."
+    )
+
+    if is_private:
+        # Private lobby: barcha o'yinchilarga PM
+        for p_uid in game["alive_players"]:
+            try:
+                await bot.send_message(p_uid, muhokama_text, parse_mode="HTML")
+            except:
+                pass
+    else:
+        await bot.send_message(chat_id, muhokama_text, parse_mode="HTML")
+
     await asyncio.sleep(60)
 
     game = get_game(lobby_id)
     if not game:
         return
 
-    await bot.send_message(chat_id,
-        "🗳️ <b>OVOZ BERISH! 60 SONIYA!</b>\n\nKimni o'yindan chiqarasiz?",
-        parse_mode="HTML",
-        reply_markup=vote_keyboard(lobby_id, players, 0))
+    # Har o'yinchiga PM da ovoz berish tugmasi
+    for player_uid in game["alive_players"]:
+        try:
+            await bot.send_message(
+                player_uid,
+                f"🗳️ <b>Raund {game['round']} — Ovoz bering! 60 soniya!</b>\n\nKimni chiqarasiz?",
+                parse_mode="HTML",
+                reply_markup=vote_keyboard(lobby_id, players, player_uid)
+            )
+        except Exception as e:
+            logging.error(f"Ovoz tugmasi yuborilmadi {player_uid}: {e}")
+
+    if not is_private and chat_id:
+        await bot.send_message(chat_id,
+            "🗳️ <b>OVOZ BERISH BOSHLANDI! 60 SONIYA!</b>\n\nHar bir o'yinchi botda ovoz bersin!",
+            parse_mode="HTML")
+
     await asyncio.sleep(60)
     await process_votes(chat_id, lobby_id)
 
@@ -1037,6 +1132,20 @@ async def process_votes(chat_id, lobby_id):
     game = get_game(lobby_id)
     if not game:
         return
+
+    is_private = game.get("is_private_lobby", False)
+    all_uids = list(game["alive_players"]) + list(game.get("eliminated", []))
+
+    async def broadcast(text, kb=None):
+        """Private lobbyda barcha o'yinchilarga, guruhda guruhga"""
+        if is_private:
+            for p_uid in all_uids:
+                try:
+                    await bot.send_message(p_uid, text, parse_mode="HTML", reply_markup=kb)
+                except:
+                    pass
+        elif chat_id:
+            await bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=kb)
 
     eliminated_id, vote_count = count_votes(lobby_id)
 
@@ -1046,11 +1155,11 @@ async def process_votes(chat_id, lobby_id):
             p = game["players"].get(pid)
             if p:
                 text += f"• {p['full_name']}: {v} ovoz\n"
-        await bot.send_message(chat_id, text, parse_mode="HTML")
+        await broadcast(text)
 
     if not eliminated_id:
         reset_votes(lobby_id)
-        await bot.send_message(chat_id, "⚖️ <b>Ovozlar teng! Qayta ovoz berish...</b>", parse_mode="HTML")
+        await broadcast("⚖️ <b>Ovozlar teng! Qayta ovoz berish...</b>")
         await asyncio.sleep(3)
         asyncio.create_task(start_voting_phase(chat_id, lobby_id))
         return
@@ -1058,14 +1167,13 @@ async def process_votes(chat_id, lobby_id):
     eliminated_player = game["players"].get(eliminated_id)
     eliminate(lobby_id, eliminated_id)
 
-    # Chiqarilgan o'yinchining barcha kartalarini ochib ko'rsatamiz
     all_cards_text = "\n".join([
         f"• {c['card_type']}: {c['name']}" for c in eliminated_player["cards"]
     ])
-    await bot.send_message(chat_id,
+    await broadcast(
         f"❌ <b>{eliminated_player['full_name']}</b> bunkerdan chiqarildi!\n\n"
-        f"<b>Barcha xususiyatlari fosh bo'ldi:</b>\n{all_cards_text}",
-        parse_mode="HTML")
+        f"<b>Barcha xususiyatlari fosh bo'ldi:</b>\n{all_cards_text}"
+    )
 
     update_stats(eliminated_id, won=False)
     add_bc(eliminated_id, 10)
@@ -1078,9 +1186,7 @@ async def process_votes(chat_id, lobby_id):
     if alive_count <= 2:
         await finish_game(chat_id, lobby_id)
     else:
-        await bot.send_message(chat_id,
-            f"✅ Qolgan o'yinchilar: {alive_count}\n\nKeyingi raund uchun yangi karta tanlanadi...",
-            parse_mode="HTML")
+        await broadcast(f"✅ Qolgan o'yinchilar: {alive_count}\n\nKeyingi raund uchun yangi karta tanlanadi...")
         await asyncio.sleep(3)
         await start_card_round(chat_id, lobby_id)
 
@@ -1091,12 +1197,21 @@ async def finish_game(chat_id, lobby_id):
     eliminated_data = [game["players"][uid] for uid in game["eliminated"] if uid in game["players"]]
     winner_names = " va ".join([p["full_name"] for p in winners_data])
     duration_minutes = game["round"] * 2
+    is_private = game.get("is_private_lobby", False)
+    all_uids = [p["user_id"] for p in list(winners_data) + list(eliminated_data)]
 
-    await bot.send_message(chat_id,
-        f"🎉 <b>O'YIN TUGADI!</b>\n\n🏆 G'oliblar: <b>{winner_names}</b>\n\n⏳ Grok tahlili...",
-        parse_mode="HTML")
+    async def broadcast(text, kb=None):
+        if is_private:
+            for p_uid in all_uids:
+                try:
+                    await bot.send_message(p_uid, text, parse_mode="HTML", reply_markup=kb)
+                except:
+                    pass
+        elif chat_id:
+            await bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=kb)
 
-    # Grok uchun g'oliblar: barcha 8 ta karta (ochilgan-ochilmagan farqsiz)
+    await broadcast(f"🎉 <b>O'YIN TUGADI!</b>\n\n🏆 G'oliblar: <b>{winner_names}</b>\n\n⏳ Grok tahlili...")
+
     winners_for_grok = []
     for p in winners_data:
         winners_for_grok.append({
@@ -1104,7 +1219,6 @@ async def finish_game(chat_id, lobby_id):
             "all_cards": p.get("cards", [])
         })
 
-    # Chiqarilganlar: faqat ochilgan kartalar
     eliminated_for_grok = []
     for p in eliminated_data:
         opened = [c for i, c in enumerate(p.get("cards", [])) if i in p.get("opened_indices", set())]
@@ -1118,16 +1232,14 @@ async def finish_game(chat_id, lobby_id):
 
     bc_amount = 125 if duration_minutes >= 20 else 75
 
-    # Natija xabari uchun g'oliblar: barcha kartalar ko'rsatilsin
     def all_cards_str(p):
-        return " | ".join([f"{c['card_type']}: {c['name']}" for c in p.get("cards", [])])
+        return "\n   ".join([f"• {c['card_type']}: {c['name']}" for c in p.get("cards", [])])
 
-    # Chiqarilganlar: ochilganlari
     def opened_cards_str(p):
         opened = [c for i, c in enumerate(p.get("cards", [])) if i in p.get("opened_indices", set())]
         return ", ".join([c["name"] for c in opened]) if opened else "karta ochmagan"
 
-    winners_list = "\n".join([
+    winners_list = "\n\n".join([
         f"🥇 <b>{p['full_name']}</b>\n   {all_cards_str(p)}"
         for p in winners_data])
 
@@ -1135,15 +1247,15 @@ async def finish_game(chat_id, lobby_id):
         f"{i+1}. {p['full_name']} — {opened_cards_str(p)}"
         for i, p in enumerate(eliminated_data)])
 
-    await bot.send_message(chat_id,
+    await broadcast(
         f"📊 <b>O'YIN NATIJASI</b>\n\n"
         f"☢️ {game['scenario']} ({game['year']})\n"
         f"⏱️ {duration_minutes} daqiqa | {game['round']-1} raund\n\n"
         f"🏆 <b>G'oliblar (barcha xususiyatlari):</b>\n{winners_list}\n\n"
-        f"💀 <b>Chiqarilganlar (ochilgan kartalar):</b>\n{eliminated_list}\n\n"
+        f"💀 <b>Chiqarilganlar:</b>\n{eliminated_list}\n\n"
         f"🔮 <b>Grok tahlili:</b>\n<i>{grok_analysis}</i>\n\n"
-        f"💰 G'oliblar +{bc_amount} BC oldi!\n👉 Keyingi o'yin: /newgame",
-        parse_mode="HTML")
+        f"💰 G'oliblar +{bc_amount} BC oldi!\n👉 Keyingi o'yin: /newgame"
+    )
 
     for wid in winners:
         update_stats(wid, won=True)
@@ -1241,73 +1353,23 @@ async def on_bot_added(event):
         conn.close()
         end_game(chat.id)
 
-async def parse_and_save_cards(text: str):
-    """
-    Admin yuborgan matnni tahlil qilib kartalarni bazaga saqlaydi.
-    Grok yordamida karta turini aniqlaydi.
-    Format: "emoji Nom: Tavsif" yoki "Nom: Tavsif"
-    """
-    import re
-
-    # Karta turlarini aniqlash uchun kalit so'zlar
-    TYPE_KEYWORDS = {
-        "👮 Kasb": ["kasb","mutaxassis","xodim","muhandis","shifokor","o'qituvchi",
-                    "arxeolog","geolog","mexanik","fermer","harbiy","oshpaz","psixolog",
-                    "biolog","kimyogar","dasturchi","quruvchi","haydovchi","pilot",
-                    "dengizchi","elektrchi","hunarmand","rassom","yozuvchi","sportchi"],
-        "💪 Salomatlik": ["sog'lom","kasal","nogir","diabetik","astma","yurak","allergiya",
-                          "o'pkа","blind","kar","ortopedik","immunitet","gipertenziya"],
-        "📖 Biografiya": ["yosh","yoshli","ayol","erkak","farzand","oilali","beva","talaba",
-                          "nafaqaxo'r","yolg'iz","ota","ona","bola","o'smir","keksa"],
-        "🎯 Hunar": ["qurol","meditsina","tibbiy","qishloq","elektr","kompyuter","til",
-                     "muloqot","tamirlash","qurilish","ovchi","baliq","tikuvchi","pazandalik"],
-        "🧬 Genetika": ["genetik","dna","irsiy","mutatsiya","immunitet","kuchli","zaif",
-                        "chidamli","allergen","qon","reflektor"],
-        "🧠 Aql": ["iq","aqliy","matematik","strategik","mantiqiy","iqtidor","ziyrak",
-                   "yodlash","analitik","professor","intellekt","bilim"],
-        "❤️ Ijtimoiy": ["rahbar","jamoaviy","muloqot","ishontira","do'stona","qarama-qarshi",
-                        "yolg'izlik","introvert","ekstravert","haydovchi","psixolog","ta'sir"],
-        "🎒 Bagaj": ["bug'doy","don","dori","asbob","qurol","kitob","urug'","urugʻ","tuxum",
-                     "konserva","vitamin","kiyim","pul","oltin","tosh","texnika","aksesuar",
-                     "oziq","ovqat","suv","generator","batareya","radio"],
-    }
-
-    def detect_type(name: str, desc: str) -> str:
-        text_lower = (name + " " + desc).lower()
-        for card_type, keywords in TYPE_KEYWORDS.items():
-            for kw in keywords:
-                if kw in text_lower:
-                    return card_type
-        return "👮 Kasb"  # default
-
-    # Matnni qatorlarga ajrat
+async def parse_and_save_cards(text: str, card_type: str = "👮 Kasb"):
+    """Admin yuborgan matnni tahlil qilib kartalarni bazaga saqlaydi."""
     lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
-
     saved = 0
     failed = []
 
     for line in lines:
-        # "emoji Nom: Tavsif" yoki "Nom: Tavsif" formatini tahlil qil
-        # Emoji bor bo'lishi mumkin — ikki holatni tekshiramiz
         if ":" not in line:
             failed.append(line[:40])
             continue
-
-        # Ikki qismga bo'l: nom va tavsif
         colon_idx = line.index(":")
         name_part = line[:colon_idx].strip()
         desc_part = line[colon_idx+1:].strip()
-
         if not name_part or not desc_part:
             failed.append(line[:40])
             continue
-
-        # Emoji ni nomdan ajrat (agar bor bo'lsa)
-        # Emoji odatda 1-2 ta unicode belgi bo'ladi
-        clean_name = name_part.strip()
-
-        card_type = detect_type(clean_name, desc_part)
-        create_card(card_type, clean_name, desc_part)
+        create_card(card_type, name_part, desc_part)
         saved += 1
 
     return saved, failed
