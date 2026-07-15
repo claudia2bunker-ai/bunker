@@ -53,80 +53,48 @@ async def get_scenario_description(scenario, year):
 
 
 async def generate_group_result(winners_data, eliminated_data, scenario, year, duration_minutes):
-    """
-    G'oliblar uchun chuqur va kulgili tahlil.
-    winners_data: har birida 'full_name', 'all_cards' (8 ta karta dict ro'yxati) bor.
-    eliminated_data: xuddi shunday.
-    """
+    """G'oliblar uchun chuqur va kulgili tahlil."""
 
-    # G'oliblar: barcha 8 ta karta
     winners_text = ""
     for w in winners_data:
-        cards_list = "\n    ".join([
-            f"• {c['card_type']}: {c['name']} — {c['description']}"
-            for c in w.get("all_cards", [])
+        cards = w.get("all_cards", [])
+        cards_lines = "\n    ".join([
+            f"• {c.get('card_type','?')}: {c.get('name','?') } — {c.get('description','')}"
+            for c in cards
         ])
-        winners_text += f"\n👤 {w['full_name']}:\n    {cards_list}\n"
+        winners_text += f"\n👤 {w['full_name']}:\n    {cards_lines}\n"
 
-    # Chiqarilganlar: faqat ochilgan kartalar
-    eliminated_text = ""
-    for i, p in enumerate(eliminated_data):
-        opened = p.get("opened_cards", [])
-        cards_str = ", ".join([f"{c['card_type']}: {c['name']}" for c in opened]) if opened else "hech narsa ochmagan"
-        eliminated_text += f"{i+1}. {p['full_name']} — {cards_str}\n"
+    survival = "uzoq muddat (o'nlab yillar)" if duration_minutes >= 20 else "bir necha yil"
 
-    survival = "uzoq muddat (o'nlab yillar)" if duration_minutes >= 20 else "qisqaroq muddat (bir necha yil)"
+    prompt = f"""Bunker o'yini tugadi.
+Voqea: {scenario} | Yil: {year}
 
-    prompt = f"""Bunker o'yini tugadi. Voqea: {scenario} ({year}-yil).
-
-━━━━━━━━━━━━━━━━━━━━
-🏆 OMON QOLGANLAR va ularning TO'LIQ xususiyatlari:
+━━━ OMON QOLGANLAR (barcha xususiyatlari) ━━━
 {winners_text}
-━━━━━━━━━━━━━━━━━━━━
-💀 O'YINDAN CHIQARILGANLAR (tartibda, faqat ochilganlari):
-{eliminated_text}
-━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-VAZIFA: Faqat g'oliblar haqida qiziqarli, kulgili va chuqur hikoya yoz.
-Chiqarilganlar haqida UMUMAN yozma — ular bilan ishting yo'q.
+Faqat g'oliblar haqida KULGILI VA CHUQUR hikoya yoz — {survival} davomida.
 
-G'OLIBLAR TAHLILI qoidalari:
-1. Har bir g'olibning BARCHA 8 xususiyatini tahlilga qo'sh — ularni o'tkazib ketma
-2. Bagaj — agar bug'doy bo'lsa "ochliksiz yashadilar", dori bo'lsa "kasallik muammo bo'lmadi" va h.k.
-3. Fobiya/zaif tomonlar — ular hayotga qanday ta'sir qildi? (qorong'ulikdan qo'rqsa tungi navbatda muammo chiqdi va h.k.)
-4. Yosh + genetika + sog'liq — ular qancha yashashi mumkinligini aniqlaydi
-5. Jinsi va munosabatlar:
-   - Agar ikkala g'olib turli jins vakili (erkak+ayol) bo'lsa va yosh/sog'liq imkon bersa → turmush qurdilar, farzand ko'rdilar (yoki ko'rolmadilar — sababini ayt)
-   - Agar bir xil jins vakili bo'lsa, yoki trans/gey bo'lsa → bu ham mumkin, tabiiyki yoz
-   - Agar yosh farqi katta bo'lsa yoki sog'liq yomon bo'lsa → romantik emas, boshqa munosabat (ona-farzand, ustoz-shogird va h.k.)
-6. Voqea turi ta'siri:
-   - Zombie → ular bunkerni qanday himoya qilishdi? Bir kuni zombie to'dasiga duch keldilarmi?
-   - AI urushi → texnologiyani o'chiriб qo'ydilarmi? Yoki AI bilan muzokarami?
-   - Meteor → osmondagi to'zg'in qachon tinchlandimi?
-   - Suv toshqini → qayiq qurishdilarmi? Yoki tog'ga chiqqanmi?
-   va h.k. — voqeaga mos holda ijodiy yoz
-7. Kulgili va o'tkir detallar qo'sh — ba'zi xususiyatlar achchiq hazilga imkon beradi
-   (masalan: "Professional cho'ntakchi bo'lgan Azamat bunkerda cho'ntaklaydigan hech kim qolmaganini anglab, 
-   o'zini qishloq xo'jaligi ishlarига bag'ishlashga majbur bo'ldi")
+QOIDALAR:
+1. Har bir xususiyatni (kasb, sog'liq, yosh, bagaj, genetika, hunar, ijtimoiy) hikoyaga qo'sh
+2. Kulgili xususiyatlardan maksimal foydalanlan — masalan bagajda "yashil soyabon" bor bo'lsa meteordan saqladimi? "Qunduz tishlari" genetikasi hayotda qanday yordam berdi? Hazilga aylantir!
+3. Sog'liq ta'siri: anemiya=ko'p charchaydi, yurak yetishmovchiligi=og'ir ish qila olmaydi
+4. Yosh + jins + sog'liq asosida turmush/farzand masalasi — ANIQ ayt, umumiy gaplar emas
+5. Bagaj amaliy foydasi: durbin→uzoqni ko'rdi, soyabon→kul yomg'iridan himoya va h.k.
+6. Kasb va hunar → bunkerdagi aniq roli
+7. Voqeaga mos detal: meteor→toshlar yog'di, atmosfera o'zgardi
+8. Kulgili + dramatik = mukammal hikoya
 
-Hajm: 6-8 jumlada, kichik hikoya uslubida. 
-Til: O'zbek, jonli, o'tkir, ba'zan istehzoli, lekin insonparvar.
-Boshlanish: to'g'ridan g'oliblar haqida yoz (kirish gapi kerak emas)."""
+Uslub: kichik hikoya, o'tkir, ba'zan istehzoli. 6-8 jumla. O'zbek tilida.
+To'g'ridan personajlar haqida boshlang."""
 
-    result = await _ask_grok(prompt, max_tokens=1200, temperature=0.97)
-    return result or (
-        f"🏆 {' va '.join([w['full_name'] for w in winners_data])} bunkerda {survival} yashab, "
-        f"insoniyatni qayta qurdilar."
-    )
+    result = await _ask_grok(prompt, max_tokens=1400, temperature=0.97)
+    return result or f"🏆 G'oliblar bunkerda {survival} yashab, insoniyatni qayta qurdilar."
 
 
 async def analyze_winners(winners_data, scenario, year):
     """Eski funksiya — moslik uchun"""
-    text = "\n".join([f"• {w.get('full_name','?')} — {w.get('card_name','')}" for w in winners_data])
-    prompt = (
-        f"Bunker o'yini, voqea: {scenario} ({year}).\n"
-        f"G'oliblar:\n{text}\n\n"
-        f"Ularning kelajagini kulgili va dramatik tarzda yoz. O'zbek tilida, 150 so'z."
-    )
+    text = "\n".join([f"• {w.get('full_name','?')}" for w in winners_data])
+    prompt = f"Bunker o'yini, voqea: {scenario} ({year}).\nG'oliblar:\n{text}\nKelajagini yoz. O'zbek tilida, 150 so'z."
     result = await _ask_grok(prompt, max_tokens=500)
     return result or "🔮 Ular insoniyatni qayta qurdilar."
