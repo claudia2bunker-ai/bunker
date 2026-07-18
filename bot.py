@@ -709,6 +709,7 @@ async def callback_handler(call: CallbackQuery):
                 back_keyboard("back_main"))
             return
         lobby_id = create_lobby(uid, cid)
+        get_or_create_user(uid, call.from_user.username or "", call.from_user.full_name)
         join_lobby(lobby_id, uid)
         await edit(
             f"🏠 <b>Lobby #{lobby_id} yaratildi!</b>\n\n"
@@ -743,16 +744,17 @@ async def callback_handler(call: CallbackQuery):
         if get_lobby_player_count(lobby_id) >= 10:
             await call.answer("❌ Lobby to'ldi!", show_alert=True)
             return
+        # MUHIM: foydalanuvchini bazaga qo'sh
+        get_or_create_user(uid, call.from_user.username or "", call.from_user.full_name)
         if not is_in_lobby(lobby_id, uid):
-            cards = get_recent_cards(50)
-            if not cards:
-                await call.answer("❌ Kartalar yo'q!", show_alert=True)
-                return
-            join_lobby(lobby_id, uid, random.choice(cards)["id"])
+            join_lobby(lobby_id, uid)
         new_count = get_lobby_player_count(lobby_id)
         is_creator = lobby["creator_id"] == uid
         await edit(
-            f"🏠 <b>Lobby #{lobby_id}</b>\n\n👥 O'yinchilar: {new_count}/10\n✅ Siz lobbydasiz!",
+            f"🏠 <b>Lobby #{lobby_id}</b>\n\n"
+            f"👥 O'yinchilar: {new_count}/10\n"
+            f"✅ Siz lobbydasiz!\n\n"
+            f"Yaratuvchi o'yinni boshlaguncha kuting...",
             lobby_action_keyboard(lobby_id, is_creator=is_creator, joined=True))
 
     elif data.startswith("leave_lobby_"):
@@ -879,13 +881,29 @@ async def callback_handler(call: CallbackQuery):
                     pass
 
         lobby = get_lobby(lobby_id)
-        group_chat_id = lobby["chat_id"] if lobby else cid
-        await bot.send_message(group_chat_id,
+        is_private = game.get("is_private_lobby", False)
+
+        card_open_text = (
             f"👁️ <b>{player['full_name']}</b> kartasini ochdi (Raund {game['round']}):\n\n"
             f"🏷️ {opened_card['card_type']}\n"
             f"👤 <b>{opened_card['name']}</b>\n"
-            f"📝 <i>{opened_card['description']}</i>",
-            parse_mode="HTML")
+            f"📝 <i>{opened_card['description']}</i>"
+        )
+
+        if is_private:
+            # Barcha o'yinchilarga PM (o'ziga emas)
+            all_uids = list(game["alive_players"]) + list(game.get("eliminated", []))
+            for p_uid in all_uids:
+                if p_uid != uid:
+                    try:
+                        await bot.send_message(p_uid, card_open_text, parse_mode="HTML")
+                    except:
+                        pass
+            group_chat_id = None
+        else:
+            group_chat_id = lobby["chat_id"] if lobby else None
+            if group_chat_id:
+                await bot.send_message(group_chat_id, card_open_text, parse_mode="HTML")
 
         if all_alive_revealed_this_round(lobby_id):
             await asyncio.sleep(2)
